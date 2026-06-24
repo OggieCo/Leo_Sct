@@ -17,6 +17,7 @@ setup(
         ('share/' + package_name + '/config', ['config/sup_gpt.yaml']),
         ('share/' + package_name + '/config', ['config/cylinder_positions.json']),
         ('share/' + package_name + '/worlds', ['worlds/random_world.sdf']),
+        ('share/' + package_name + '/worlds', ['worlds/corridor_with_cube.sdf']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -30,6 +31,7 @@ setup(
             'robot_supervisor_3_movements = swarm_basics.robot_supervisor_3_movements:main',
             'coverage_plotter = swarm_basics.coverage_plotter:main',
             'bump_counter = swarm_basics.bump_counter:main',
+            'odom_tf_publisher = swarm_basics.odom_tf_publisher:main',
         ],
     },
 )

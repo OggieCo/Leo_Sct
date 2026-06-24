@@ -5,21 +5,26 @@ from launch import LaunchDescription
 from launch.actions import OpaqueFunction
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
-
+import math
 
 def generate_launch_description():
 
     leo_description = get_package_share_directory("leo_description")
 
     # --- Total robots ---
-    total_robots = 1
+    total_robots = 2
 
     # --- Initial positions for each robot ---
     robot_positions = [
-        (0.0, 0.0),
-        # (1.0, 0.0),
-        # (0.0, 1.0),
-        # (-1.0, 1.0),
+
+        #spawning rovers in "corridor_with_cube.sdf"
+        (-6.5, 0.0),  # robot_0 spawns in the leftmost grid column
+        (6.5, 0.0, math.pi),   # robot_1 spawns in the rightmost grid column, facing robot_0
+
+        #(0.0, 0.0),
+        #(1.0, 0.0),
+        #(0.0, 1.0),
+        #(-1.0, 1.0),
         # (-1.0, 0.0),
         # (0.0, -1.0),
         # (2.0, 0.0),
@@ -30,11 +35,15 @@ def generate_launch_description():
 
     robots_to_spawn = []
     for i in range(total_robots):
-        x, y = robot_positions[i]
+        pos = robot_positions[i]
+        x = pos[0]
+        y = pos[1]
+        yaw = pos[2] if len(pos) > 2 else 0.0
         robots_to_spawn.append({
             "ns": f"robot_{i}",
             "x": x,
-            "y": y
+            "y": y,
+            "yaw": yaw
         })
 
     plot_node = Node(
@@ -54,18 +63,37 @@ def generate_launch_description():
         for robot in robots:
             ns = robot["ns"]
             bridge_args += [
+                # ⬆ OUT: supervisor sends motion → bridge feeds it to Gazebo → robot drives
                 f"/{ns}/cmd_vel@geometry_msgs/msg/Twist]ignition.msgs.Twist",
+
+                # ⬇ IN: Gazebo tells where robot is → bridge publishes → odom_tf_publisher & RViz read it
                 f"/{ns}/odom@nav_msgs/msg/Odometry[ignition.msgs.Odometry",
-                f"/{ns}/tf@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V",
+
+                # ⬇ IN: Gazebo broadcasts all model positions → bridge → root /tf → RViz draws the world
+                f"/tf@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V",
+
+                # ⬇ IN: Gazebo raw depth data → bridge (currently no subscriber, available for future use)
                 f"/{ns}/depth_camera/depth_image@sensor_msgs/msg/Image@ignition.msgs.Image",
+
+                # ⬇ IN: Gazebo camera calibration → bridge → image_processor (knows how to interpret pixels)
                 f"/{ns}/depth_camera/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo",
+
+                # ⬇ IN: Gazebo depth image → bridge → image_processor → detects obstacles (CLEAR/LEFT/RIGHT/CORNER)
                 f"/{ns}/depth_camera/image@sensor_msgs/msg/Image@ignition.msgs.Image",
-                f"/world/random_world/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"
+
+                # ⬇ IN: Gazebo collision sensor → bridge → bump_counter logs "ouch, I hit something"
+                f"/world/custom_corridor/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"
                 f"@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
+
+                # ⬇ IN: Gazebo wheel positions → bridge → robot_state_publisher → TF → RViz shows spinning wheels
+                f"/{ns}/joint_states@sensor_msgs/msg/JointState[ignition.msgs.Model",
             ]
 
+        # ⬇ IN: Gazebo publishes ALL model positions → bridge → coverage_plotter (tracks visited grid cells)
         bridge_args += [
-            "/world/random_world/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V",
+            #"/world/u_corridor/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V",
+            #"/world/random_world/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V",
+            "/world/custom_corridor/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V"
         ]    
 
         bridge_node = Node(
@@ -83,6 +111,7 @@ def generate_launch_description():
             ns = robot["ns"]
             x = robot["x"]
             y = robot["y"]
+            yaw = robot["yaw"]
 
             # URDF with per-robot namespace mapping
             xacro_file = os.path.join(leo_description, 'urdf', 'leo_sim.urdf.xacro')
@@ -98,7 +127,7 @@ def generate_launch_description():
                     "use_sim_time": True,
                     "robot_description": robot_description
                 }],
-                remappings=[("/joint_states", f"{ns}/joint_states")],
+                #remappings=[("/joint_states", f"{ns}/joint_states")],
                 output="screen"
             )
 
@@ -112,6 +141,7 @@ def generate_launch_description():
                     "-x", str(x),
                     "-y", str(y),
                     "-z", "0.1",
+                    "-Y", str(yaw),
                     "-topic", f"/{ns}/robot_description"
                 ],
                 output="screen"
@@ -135,6 +165,7 @@ def generate_launch_description():
                 executable="image_processor",
                 name="image_processor",
                 namespace=ns,
+                parameters=[{"enable_gui": False}],  # Set True to show OpenCV debug windows
                 output="screen"
             )
 
@@ -145,11 +176,34 @@ def generate_launch_description():
                 namespace=ns,
                 output="screen",
                 remappings=[
-                    ('contact', f"/world/random_world/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"),
+                    ('contact', f"/world/custom_corridor/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"),
                 ],
             )
 
-            nodes += [state_pub, spawn_node, behavior_node, cpp_node, bump_node]
+            # Odom-to-TF bridge: publishes odom -> base_footprint transform
+            odom_tf_node = Node(
+                package="swarm_basics",
+                executable="odom_tf_publisher",
+                name="odom_tf_publisher",
+                namespace=ns,
+                output="screen",
+            )
+
+            # Added Depth camera → fake laser scan (for Nav2 costmaps)
+            depth_to_scan = Node(
+                package="depthimage_to_laserscan",
+                executable="depthimage_to_laserscan_node",
+                name="depth_to_scan",
+                namespace=ns,
+                remappings=[
+                    ('depth', 'depth_camera/image'),
+                    ('depth_camera_info', 'depth_camera/camera_info'),
+                    ('scan', 'scan'),
+                ],
+                output="screen",
+            )
+
+            nodes += [state_pub, spawn_node, behavior_node, cpp_node, bump_node, odom_tf_node, depth_to_scan]
 
         return nodes
 

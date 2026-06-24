@@ -18,6 +18,10 @@ class RGBDZoneDetector : public rclcpp::Node
 public:
     RGBDZoneDetector() : Node("image_processor")
     {
+        // Declare parameter to control GUI — disable by default for headless safety
+        this->declare_parameter("enable_gui", false);
+        enable_gui_ = this->get_parameter("enable_gui").as_bool();
+
         zones_pub_ = this->create_publisher<std_msgs::msg::String>("detected_zones", 10);
 
         rgb_sub_.subscribe(this, "depth_camera/image");
@@ -28,6 +32,8 @@ public:
 
         sync_ = std::make_shared<message_filters::Synchronizer<SyncPolicy>>(SyncPolicy(10), rgb_sub_, depth_sub_);
         sync_->registerCallback(std::bind(&RGBDZoneDetector::callback, this, _1, _2));
+
+        RCLCPP_INFO(this->get_logger(), "GUI display %s", enable_gui_ ? "ENABLED" : "DISABLED");
     }
 
 private:
@@ -95,14 +101,16 @@ private:
         msg.data = final_zone;
         zones_pub_->publish(msg);
 
-        // --- Visualization ---
-        cv::Mat depth_vis;
-        cv::normalize(depth, depth_vis, 0, 255, cv::NORM_MINMAX);
-        depth_vis.convertTo(depth_vis, CV_8U);
-        cv::applyColorMap(depth_vis, depth_vis, cv::COLORMAP_JET);
-        cv::imshow("Depth", depth_vis);
-        // cv::imshow("Color", color);
-        cv::waitKey(1);
+        // --- Visualization (only when GUI is enabled) ---
+        if (enable_gui_) {
+            cv::Mat depth_vis;
+            cv::normalize(depth, depth_vis, 0, 255, cv::NORM_MINMAX);
+            depth_vis.convertTo(depth_vis, CV_8U);
+            cv::applyColorMap(depth_vis, depth_vis, cv::COLORMAP_JET);
+            cv::imshow("Depth", depth_vis);
+            // cv::imshow("Color", color);
+            cv::waitKey(1);
+        }
     }
 
     void compute_obstacle_distances(const cv::Mat& depth,
@@ -188,6 +196,7 @@ private:
     //     return true;
     // }
 
+    bool enable_gui_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr zones_pub_;
     message_filters::Subscriber<sensor_msgs::msg::Image> rgb_sub_;
     message_filters::Subscriber<sensor_msgs::msg::Image> depth_sub_;

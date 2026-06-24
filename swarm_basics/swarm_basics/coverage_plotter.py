@@ -12,10 +12,11 @@ class CoveragePlotter(Node):
 
         # === CONFIGURATION ===
         self.robot_namespaces = [f"robot_{i}" for i in range(10)]
-        self.save_path = "/home/ecem/ros2_ws/src/swarm_basics/config/coverage_results.png"
+        #self.save_path = "/home/ecem/ros2_ws/src/swarm_basics/config/coverage_results.png"
+        self.save_path = "/root/ros2_ws/coverage_results.png" 
 
         # === GRID SETUP ===
-        self.env_min = -7
+        self.env_min = -7   
         self.env_max = 7
         self.grid_size = 1.0  # 1x1 m cells
         self.cells = [(x, y) for x in range(self.env_min, self.env_max)
@@ -29,7 +30,9 @@ class CoveragePlotter(Node):
         # We only need one subscription for all robots (global positions)
         self.create_subscription(
             TFMessage,
-            '/world/random_world/dynamic_pose/info',
+            #'/world/u_corridor/dynamic_pose/info',
+            #'/world/random_world/dynamic_pose/info',
+            '/world/custom_corridor/dynamic_pose/info',
             self.pose_callback,
             10,
         )
