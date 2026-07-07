@@ -7,6 +7,8 @@
   <maintainer email="ecem@todo.todo">ecem</maintainer>
   <license>TODO: License declaration</license>
 
+  <depend>slam_toolbox</depend>
+
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>

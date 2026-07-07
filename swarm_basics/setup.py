@@ -12,6 +12,12 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', ['launch/spawn_multi_robots.launch.py']),
         ('share/' + package_name + '/launch', ['launch/leo_gz.launch.py']),
+
+
+        #slam toolbox config/launch files
+        ('share/' + package_name + '/launch', ['launch/slam_toolbox.launch.py']),
+        ('share/' + package_name + '/config', ['config/nav2/slam_toolbox.yaml']),
+
         ('share/' + package_name + '/config', ['config/supervisor.yaml']),
         ('share/' + package_name + '/config', ['config/supervisor2.yaml']),
         ('share/' + package_name + '/config', ['config/sup_gpt.yaml']),
@@ -32,6 +38,8 @@ setup(
             'coverage_plotter = swarm_basics.coverage_plotter:main',
             'bump_counter = swarm_basics.bump_counter:main',
             'odom_tf_publisher = swarm_basics.odom_tf_publisher:main',
+            'depth_to_scan_custom = swarm_basics.depth_to_scan:main',
+            'ground_truth_map = swarm_basics.ground_truth_map:main',
         ],
     },
 )

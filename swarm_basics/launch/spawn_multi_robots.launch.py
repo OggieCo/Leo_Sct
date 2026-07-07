@@ -12,14 +12,14 @@ def generate_launch_description():
     leo_description = get_package_share_directory("leo_description")
 
     # --- Total robots ---
-    total_robots = 2
+    total_robots = 1
 
     # --- Initial positions for each robot ---
     robot_positions = [
 
         #spawning rovers in "corridor_with_cube.sdf"
-        (-6.5, 0.0),  # robot_0 spawns in the leftmost grid column
-        (6.5, 0.0, math.pi),   # robot_1 spawns in the rightmost grid column, facing robot_0
+        (-6.5, 0.0, 0.0),  # robot_0 spawns in the leftmost grid column
+        #(6.5, 0.0, math.pi),   # robot_1 spawns in the rightmost grid column, facing robot_0
 
         #(0.0, 0.0),
         #(1.0, 0.0),
@@ -69,9 +69,6 @@ def generate_launch_description():
                 # ⬇ IN: Gazebo tells where robot is → bridge publishes → odom_tf_publisher & RViz read it
                 f"/{ns}/odom@nav_msgs/msg/Odometry[ignition.msgs.Odometry",
 
-                # ⬇ IN: Gazebo broadcasts all model positions → bridge → root /tf → RViz draws the world
-                f"/tf@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V",
-
                 # ⬇ IN: Gazebo raw depth data → bridge (currently no subscriber, available for future use)
                 f"/{ns}/depth_camera/depth_image@sensor_msgs/msg/Image@ignition.msgs.Image",
 
@@ -119,6 +116,7 @@ def generate_launch_description():
             robot_description = doc.toxml()
 
             # State publisher (per robot)
+            # Remap TF to global /tf so RViz and SLAM Toolbox can see it
             state_pub = Node(
                 package="robot_state_publisher",
                 executable="robot_state_publisher",
@@ -127,7 +125,10 @@ def generate_launch_description():
                     "use_sim_time": True,
                     "robot_description": robot_description
                 }],
-                #remappings=[("/joint_states", f"{ns}/joint_states")],
+                remappings=[
+                    ("tf", "/tf"),
+                    ("tf_static", "/tf_static"),
+                ],
                 output="screen"
             )
 
@@ -181,25 +182,29 @@ def generate_launch_description():
             )
 
             # Odom-to-TF bridge: publishes odom -> base_footprint transform
+            # Uses spawn_x/y to offset odometry to match Gazebo world position
             odom_tf_node = Node(
                 package="swarm_basics",
                 executable="odom_tf_publisher",
                 name="odom_tf_publisher",
                 namespace=ns,
+                parameters=[{
+                    "spawn_x": x,
+                    "spawn_y": y,
+                    "spawn_yaw": yaw,
+                }],
                 output="screen",
             )
 
-            # Added Depth camera → fake laser scan (for Nav2 costmaps)
+            # Custom depth → fake laser scan (no sync required)
             depth_to_scan = Node(
-                package="depthimage_to_laserscan",
-                executable="depthimage_to_laserscan_node",
+                package="swarm_basics",
+                executable="depth_to_scan_custom",
                 name="depth_to_scan",
                 namespace=ns,
-                remappings=[
-                    ('depth', 'depth_camera/image'),
-                    ('depth_camera_info', 'depth_camera/camera_info'),
-                    ('scan', 'scan'),
-                ],
+                parameters=[{
+                    "use_sim_time": True,
+                }],
                 output="screen",
             )
 

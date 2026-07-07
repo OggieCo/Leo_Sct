@@ -11,6 +11,13 @@ class OdomTfPublisher(Node):
     def __init__(self):
         super().__init__('odom_tf_publisher')
 
+        self.declare_parameter('spawn_x', 0.0)
+        self.declare_parameter('spawn_y', 0.0)
+        self.declare_parameter('spawn_yaw', 0.0)
+        self.spawn_x = self.get_parameter('spawn_x').value
+        self.spawn_y = self.get_parameter('spawn_y').value
+        self.spawn_yaw = self.get_parameter('spawn_yaw').value
+
         # Publish directly to root /tf so RViz sees it (bypasses namespace)
         self.tf_pub = self.create_publisher(TFMessage, '/tf', 100)
 
@@ -21,9 +28,10 @@ class OdomTfPublisher(Node):
         t = TransformStamped()
         t.header.stamp = msg.header.stamp  # use odom timestamp, not now()
         t.header.frame_id = msg.header.frame_id  # 'odom'
-        t.child_frame_id = msg.child_frame_id     # 'base_footprint'
-        t.transform.translation.x = msg.pose.pose.position.x
-        t.transform.translation.y = msg.pose.pose.position.y
+        # Use namespaced child frame: "robot_0/base_footprint" from odom message
+        t.child_frame_id = msg.child_frame_id     # 'robot_0/base_footprint'
+        t.transform.translation.x = msg.pose.pose.position.x + self.spawn_x
+        t.transform.translation.y = msg.pose.pose.position.y + self.spawn_y
         t.transform.translation.z = msg.pose.pose.position.z
         t.transform.rotation = msg.pose.pose.orientation
 
