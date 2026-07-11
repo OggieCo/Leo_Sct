@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
-"""Simple depth image → laser scan converter without sync requirements."""
+"""Depth image → laser scan converter.
+
+Reads the RealSense depth camera output and produces a LaserScan message
+that SLAM Toolbox and Nav2/AMCL can use for obstacle detection and mapping.
+
+Why this exists:
+- The robot uses a RealSense depth camera (not a physical LiDAR)
+- The camera outputs depth images (64x48 pixels, 32-bit float distances)
+- This node samples a horizontal row of pixels and converts them to laser beams
+- Accounts for the camera's 17° downward pitch (samples near the horizon)
+"""
 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo, LaserScan
-from geometry_msgs.msg import TransformStamped
-from tf2_ros import StaticTransformBroadcaster
 import numpy as np
-import math
 
 
 class DepthToScan(Node):
@@ -23,9 +30,6 @@ class DepthToScan(Node):
 
         self.scan_pub = self.create_publisher(LaserScan, 'scan', 10)
 
-        # Static TF for depth_camera frame (Gazebo gives weird nested frame_id)
-        self.tf_broadcaster = StaticTransformBroadcaster(self)
-
         self.get_logger().info('DepthToScan custom node started')
 
     def camera_info_cb(self, msg: CameraInfo):
@@ -35,12 +39,12 @@ class DepthToScan(Node):
         if self.camera_info is None:
             return  # Wait for first camera_info
 
-        # Parse depth image (32FC1 = 32-bit float, 1 channel)
+        # Parse depth image: 32FC1 = 32-bit float, 1 channel
         raw = np.array(msg.data, dtype=np.uint8)
         depth = raw.view(np.float32).reshape(msg.height, msg.width)
 
-        # --- FOV calculation ---
-        hfov = 1.51844  # 87 degrees HFOV from URDF
+        # --- FOV: 87° horizontal from URDF ---
+        hfov = 1.51844  # radians
         angles = np.linspace(-hfov / 2, hfov / 2, msg.width)
 
         # Build LaserScan message
@@ -58,23 +62,23 @@ class DepthToScan(Node):
         scan.range_min = 0.1
         scan.range_max = 10.0
 
-        # --- Row selection ---
-        # Camera is pitched down 17° (-0.3 rad).
-        # VFOV = 2*atan(tan(87°/2)*48/64) ≈ 70.8°
-        # With 17° downward pitch, horizontal plane is ~26% from top: row ~12
-        # Sample rows 8-16 (covering horizon) and take min range per column
+        # --- Horizon row selection ---
+        # Camera is pitched down 17° (-0.3 rad) in URDF.
+        # VFOV ≈ 71° (calculated from HFOV 87° and aspect ratio)
+        # The horizon (0° pitch) is at ~25% from top of the image
         vfov = 2.0 * np.arctan(np.tan(hfov / 2.0) * msg.height / msg.width)
-        pitch = -0.3  # downward from URDF
+        pitch = -0.3
         horizon_row = int((vfov / 2.0 - abs(pitch)) / vfov * msg.height)
         row_start = max(0, horizon_row - 4)
         row_end = min(msg.height, horizon_row + 5)
 
+        # Take minimum range across rows (best obstacle detection)
         ranges = np.min(depth[row_start:row_end, :], axis=0)
 
-        # Replace infinity/NaN/too-close with max range
-        ranges[np.isinf(ranges)] = 10.0
-        ranges[np.isnan(ranges)] = 10.0
+        # Clean up invalid readings
+        ranges[np.isinf(ranges) | np.isnan(ranges)] = 10.0
         ranges[ranges < 0.01] = 10.0
+
         scan.ranges = ranges.tolist()
         scan.intensities = [0.0] * msg.width
 

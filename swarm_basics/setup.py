@@ -12,7 +12,10 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', ['launch/spawn_multi_robots.launch.py']),
         ('share/' + package_name + '/launch', ['launch/leo_gz.launch.py']),
-
+        ('share/' + package_name + '/launch', ['launch/nav2_robot_0.launch.py']),
+        ('share/' + package_name + '/config/nav2', ['config/nav2/robot_0_nav2.yaml']),
+        ('share/' + package_name + '/config/nav2', ['config/nav2/corridor_map.yaml']),
+        ('share/' + package_name + '/config/nav2', ['config/nav2/corridor_map.pgm']),
 
         #slam toolbox config/launch files
         ('share/' + package_name + '/launch', ['launch/slam_toolbox.launch.py']),
@@ -34,12 +37,13 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'robot_supervisor_3_movements = swarm_basics.robot_supervisor_3_movements:main',
+            #'robot_supervisor_3_movements = swarm_basics.robot_supervisor_3_movements:main',
+            'robot_supervisor_nav2 = swarm_basics.robot_supervisor_nav2:main',
             'coverage_plotter = swarm_basics.coverage_plotter:main',
             'bump_counter = swarm_basics.bump_counter:main',
             'odom_tf_publisher = swarm_basics.odom_tf_publisher:main',
             'depth_to_scan_custom = swarm_basics.depth_to_scan:main',
-            'ground_truth_map = swarm_basics.ground_truth_map:main',
+            'set_initial_pose = swarm_basics.set_initial_pose:main',
         ],
     },
 )

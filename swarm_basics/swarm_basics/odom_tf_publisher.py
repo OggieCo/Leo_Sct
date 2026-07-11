@@ -2,43 +2,46 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TransformStamped
-from tf2_msgs.msg import TFMessage
-
+import tf2_ros
 
 class OdomTfPublisher(Node):
-    """Reads Odometry and publishes odom -> base_footprint transform to /tf."""
-
     def __init__(self):
         super().__init__('odom_tf_publisher')
+        
+        # Explicitly declare namespace to capture frames correctly
+        self.ns = self.get_namespace().strip('/')
+        self.odom_frame = f"{self.ns}/odom" if self.ns else "odom"
+        self.base_frame = f"{self.ns}/base_footprint" if self.ns else "base_footprint"
+        
+        # Subscribe to namespaced odometry data
+        self.subscription = self.create_subscription(
+            Odometry,
+            'odom',
+            self.odom_callback,
+            10)
+        
+        # Initialize the transform broadcaster
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
+        self.get_logger().info(f"Odom-to-TF Bridge active: Broadcasting {self.odom_frame} -> {self.base_frame}")
 
-        self.declare_parameter('spawn_x', 0.0)
-        self.declare_parameter('spawn_y', 0.0)
-        self.declare_parameter('spawn_yaw', 0.0)
-        self.spawn_x = self.get_parameter('spawn_x').value
-        self.spawn_y = self.get_parameter('spawn_y').value
-        self.spawn_yaw = self.get_parameter('spawn_yaw').value
-
-        # Publish directly to root /tf so RViz sees it (bypasses namespace)
-        self.tf_pub = self.create_publisher(TFMessage, '/tf', 100)
-
-        self.sub = self.create_subscription(
-            Odometry, 'odom', self.odom_callback, 10)
-
-    def odom_callback(self, msg: Odometry):
+    def odom_callback(self, msg):
         t = TransformStamped()
-        t.header.stamp = msg.header.stamp  # use odom timestamp, not now()
-        t.header.frame_id = msg.header.frame_id  # 'odom'
-        # Use namespaced child frame: "robot_0/base_footprint" from odom message
-        t.child_frame_id = msg.child_frame_id     # 'robot_0/base_footprint'
-        t.transform.translation.x = msg.pose.pose.position.x + self.spawn_x
-        t.transform.translation.y = msg.pose.pose.position.y + self.spawn_y
+
+        # Enforce exact simulation timestamp
+        t.header.stamp = msg.header.stamp
+        t.header.frame_id = self.odom_frame
+        t.child_frame_id = self.base_frame
+
+        # Copy position vectors from Gazebo topic data
+        t.transform.translation.x = msg.pose.pose.position.x
+        t.transform.translation.y = msg.pose.pose.position.y
         t.transform.translation.z = msg.pose.pose.position.z
+
+        # Copy rotation quaternions
         t.transform.rotation = msg.pose.pose.orientation
 
-        tf_msg = TFMessage()
-        tf_msg.transforms.append(t)
-        self.tf_pub.publish(tf_msg)
-
+        # Publish transform to global tree
+        self.tf_broadcaster.sendTransform(t)
 
 def main(args=None):
     rclpy.init(args=args)
@@ -47,10 +50,8 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
-
+    node.destroy_node()
+    rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

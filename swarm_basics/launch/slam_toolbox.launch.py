@@ -17,8 +17,9 @@ def generate_launch_description():
     # Only one robot runs SLAM for now to avoid TF conflicts on map→odom.
     slam_node = Node(
         package="slam_toolbox",
-        executable="sync_slam_toolbox_node",
+        executable="async_slam_toolbox_node",
         name="slam_toolbox",
+        namespace="robot_0",
         parameters=[
             slam_config,
             {
@@ -26,21 +27,14 @@ def generate_launch_description():
                 "odom_frame": "odom",
                 "base_frame": "robot_0/base_footprint",
                 "laser_frame": "robot_0/realsense_link",
-                "scan_topic": "/robot_0/scan",
             },
         ],
-        output="screen",
-    )
-
-    # Ground truth map overlay — shows corridor walls + cube in RViz
-    ground_truth = Node(
-        package="swarm_basics",
-        executable="ground_truth_map",
-        name="ground_truth_map",
+        remappings=[
+            ("scan", "scan"),
+        ],
         output="screen",
     )
 
     return LaunchDescription([
         slam_node,
-        ground_truth,
     ])

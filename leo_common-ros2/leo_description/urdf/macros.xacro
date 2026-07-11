@@ -472,13 +472,13 @@
           <horizontal_fov>1.51844</horizontal_fov> <!--87 degrees-->
           <lens>
             <intrinsics>
-              <!-- fx = fy = width / ( 2 * tan (hfov / 2 ) )  = 64 / (2*tan(43.5°)) -->
-              <fx>33.72</fx>
-              <fy>33.72</fy>
+              <!-- fx = fy = width / ( 2 * tan (hfov / 2 ) ) -->
+              <fx>554.25469</fx>
+              <fy>554.25469</fy>
               <!-- cx = ( width + 1 ) / 2 -->
-              <cx>32.5</cx>
+              <cx>320.5</cx>
               <!-- cy = ( height + 1 ) / 2 -->
-              <cy>24.5</cy>
+              <cy>240.5</cy>
               <s>0</s>
             </intrinsics>
           </lens>
