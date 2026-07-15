@@ -68,7 +68,7 @@ def generate_launch_description():
         # ⬇ IN: Gazebo publishes ALL model positions → bridge → coverage_plotter (tracks visited grid cells)
         bridge_args += [
             #"/world/u_corridor/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V",
-            #"/world/random_world/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V",
+            #"/world/random_world/dynamic_pose/info@tf2_msgs/msg/TFMessage]ignition.msgs.Pose_V",
             "/world/custom_corridor/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V"
         ]    
 

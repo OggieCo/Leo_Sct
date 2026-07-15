@@ -30,8 +30,6 @@ class CoveragePlotter(Node):
         # We only need one subscription for all robots (global positions)
         self.create_subscription(
             TFMessage,
-            #'/world/u_corridor/dynamic_pose/info',
-            #'/world/random_world/dynamic_pose/info',
             '/world/custom_corridor/dynamic_pose/info',
             self.pose_callback,
             10,
@@ -98,7 +96,8 @@ class CoveragePlotter(Node):
                 xs, ys = zip(*traj)
                 self.ax.plot(xs, ys, label=ns)
 
-        self.ax.legend(loc="upper right", fontsize="small")
+        if self.trajectories:
+            self.ax.legend(loc="upper right", fontsize="small")
         self.ax.text(
             0.05, 0.95,
             f"Visited {len(self.visited)}/{len(self.cells)} cells",
@@ -131,7 +130,8 @@ class CoveragePlotter(Node):
                 xs, ys = zip(*traj)
                 self.ax.plot(xs, ys, label=ns)
 
-        self.ax.legend(loc="upper right", fontsize="small")
+        if self.trajectories:
+            self.ax.legend(loc="upper right", fontsize="small")
         self.ax.text(
             0.05, 0.95,
             f"Visited {len(self.visited)}/{len(self.cells)} cells",

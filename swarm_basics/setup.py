@@ -18,8 +18,9 @@ setup(
         ('share/' + package_name + '/config/nav2', ['config/nav2/corridor_map.pgm']),
 
         #slam toolbox config/launch files
+        ('share/' + package_name + '/launch', ['launch/nav2_slam.launch.py']),
         ('share/' + package_name + '/launch', ['launch/slam_toolbox.launch.py']),
-        ('share/' + package_name + '/config', ['config/nav2/slam_toolbox.yaml']),
+        ('share/' + package_name + '/config/nav2', ['config/nav2/slam_toolbox.yaml']),
 
         ('share/' + package_name + '/config', ['config/supervisor.yaml']),
         ('share/' + package_name + '/config', ['config/supervisor2.yaml']),
@@ -44,6 +45,7 @@ setup(
             'odom_tf_publisher = swarm_basics.odom_tf_publisher:main',
             'depth_to_scan_custom = swarm_basics.depth_to_scan:main',
             'set_initial_pose = swarm_basics.set_initial_pose:main',
+            'random_walk = swarm_basics.random_walk:main',
         ],
     },
 )

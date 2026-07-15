@@ -6,7 +6,7 @@ from swarm_basics.robot_config import ROBOT_POSITIONS
 
 
 class SetInitialPose(Node):
-    """One-shot node that publishes initial pose for every robot in robot_config.py."""
+    """Publishes initial pose for every robot and waits for subscribers."""
 
     def __init__(self):
         super().__init__('set_initial_pose')
@@ -20,7 +20,13 @@ class SetInitialPose(Node):
                 topic = f'/{ns}/initialpose'
 
             pub = self.create_publisher(PoseWithCovarianceStamped, topic, 10)
-            rclpy.spin_once(self, timeout_sec=0.3)   # let the publisher connect
+
+            # Wait up to 10s for a subscriber (AMCL) to connect
+            timeout = time.time() + 10.0
+            while time.time() < timeout and pub.get_subscription_count() == 0:
+                rclpy.spin_once(self, timeout_sec=0.1)
+                if pub.get_subscription_count() == 0:
+                    self.get_logger().info(f'Waiting for subscriber on {topic}...')
 
             msg = PoseWithCovarianceStamped()
             msg.header.frame_id = 'map'
@@ -37,11 +43,14 @@ class SetInitialPose(Node):
                 0.0, 0.0, 0.0, 0.0, 0.0, 0.0685,
             ]
 
-            pub.publish(msg)
+            # Publish a few times to ensure delivery
+            for i in range(3):
+                msg.header.stamp = self.get_clock().now().to_msg()
+                pub.publish(msg)
+                rclpy.spin_once(self, timeout_sec=0.2)
+
             self.get_logger().info(f'Published initial pose for {ns} ({x}, {y}) on {topic}')
 
-        # Give DDS time to deliver the messages before shutting down
-        time.sleep(1.0)
         self.get_logger().info('All initial poses published. Done.')
         rclpy.shutdown()
 
@@ -49,7 +58,6 @@ class SetInitialPose(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = SetInitialPose()
-    # Keep spinning while the node works
     while rclpy.ok():
         rclpy.spin_once(node, timeout_sec=0.1)
 
