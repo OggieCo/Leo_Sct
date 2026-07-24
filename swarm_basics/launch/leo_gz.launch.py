@@ -24,11 +24,28 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+
+def launch_gz(context, *args, **kwargs):
+    pkg_ros_gz_sim = get_package_share_directory("ros_gz_sim")
+    world = context.perform_substitution(LaunchConfiguration("sim_world"))
+    hd = context.perform_substitution(LaunchConfiguration("headless"))
+
+    gz_args = f"-s -r {world}" if hd == "true" else world
+
+    return [
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(pkg_ros_gz_sim, "launch", "gz_sim.launch.py")
+            ),
+            launch_arguments={"gz_args": gz_args}.items(),
+        )
+    ]
 
 
 def generate_launch_description():
@@ -41,7 +58,7 @@ def generate_launch_description():
         "sim_world",
         #default_value=os.path.join(pkg_project_gazebo, "worlds", "random_world.sdf"),
         #default_value=os.path.join(pkg_project_worlds, "worlds", "corridor.sdf"),
-        default_value=os.path.join(pkg_project_gazebo, "worlds", "corridor_with_cube.sdf"),
+        default_value=os.path.join(pkg_project_gazebo, "worlds", "random_world.sdf"),
         description="Path to the Gazebo world file",
     )
 
@@ -51,13 +68,14 @@ def generate_launch_description():
         description="Robot namespace",
     )
 
-    # Setup to launch the simulator and Gazebo world
-    gz_sim = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(pkg_ros_gz_sim, "launch", "gz_sim.launch.py")
-        ),
-        launch_arguments={"gz_args": LaunchConfiguration("sim_world")}.items(),
+    headless_arg = DeclareLaunchArgument(
+        "headless",
+        default_value="true",
+        description="Run Gazebo without GUI (true/false)",
     )
+
+    # Setup to launch the simulator and Gazebo world
+    gz_sim = OpaqueFunction(function=launch_gz)
 
     spawn_robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -86,6 +104,7 @@ def generate_launch_description():
         [
             sim_world,
             robot_ns,
+            headless_arg,
             gz_sim,
             spawn_robot,
             topic_bridge,

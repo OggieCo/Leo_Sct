@@ -48,28 +48,29 @@ def generate_launch_description():
                 # ⬇ IN: Gazebo broadcasts all model positions → bridge → root /tf → RViz draws the world
                 f"/tf@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V",
 
-                # ⬇ IN: Gazebo raw depth data → bridge (currently no subscriber, available for future use)
+                # ⬇ IN: Gazebo LiDAR scan (360°) → bridge → /robot_0/scan for Nav2 SLAM & costmap
+                f"/{ns}/lidar/scan@sensor_msgs/msg/LaserScan[ignition.msgs.LaserScan",
+
+                # ⬇ IN: Gazebo raw depth data → bridge → image_processor & LLM camera feed
                 f"/{ns}/depth_camera/depth_image@sensor_msgs/msg/Image@ignition.msgs.Image",
 
-                # ⬇ IN: Gazebo camera calibration → bridge → image_processor (knows how to interpret pixels)
+                # ⬇ IN: Gazebo camera calibration → bridge → image_processor
                 f"/{ns}/depth_camera/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo",
 
-                # ⬇ IN: Gazebo depth image → bridge → image_processor → detects obstacles (CLEAR/LEFT/RIGHT/CORNER)
+                # ⬇ IN: Gazebo rgb image → bridge → image_processor & LLM vision
                 f"/{ns}/depth_camera/image@sensor_msgs/msg/Image@ignition.msgs.Image",
 
                 # ⬇ IN: Gazebo collision sensor → bridge → bump_counter logs "ouch, I hit something"
-                f"/world/custom_corridor/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"
+                f"/world/random_world/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"
                 f"@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
 
                 # ⬇ IN: Gazebo wheel positions → bridge → robot_state_publisher → TF → RViz shows spinning wheels
                 f"/{ns}/joint_states@sensor_msgs/msg/JointState[ignition.msgs.Model",
             ]
 
-        # ⬇ IN: Gazebo publishes ALL model positions → bridge → coverage_plotter (tracks visited grid cells)
+        # ⬇ IN: Global pose topic for coverage_plotter
         bridge_args += [
-            #"/world/u_corridor/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V",
-            #"/world/random_world/dynamic_pose/info@tf2_msgs/msg/TFMessage]ignition.msgs.Pose_V",
-            "/world/custom_corridor/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V"
+            "/world/random_world/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V"
         ]    
 
         bridge_node = Node(
@@ -136,12 +137,13 @@ def generate_launch_description():
             #    output="screen"
             #)
 
+            # Image processor — depth camera → zone detection (CLEAR/LEFT/RIGHT/CORNER)
             cpp_node = Node(
                 package="leo_image",
                 executable="image_processor",
                 name="image_processor",
                 namespace=ns,
-                parameters=[{"enable_gui": False}],  # Set True to show OpenCV debug windows
+                parameters=[{"enable_gui": False}],
                 output="screen"
             )
 
@@ -152,7 +154,7 @@ def generate_launch_description():
                 namespace=ns,
                 output="screen",
                 remappings=[
-                    ('contact', f"/world/custom_corridor/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"),
+                    ('contact', f"/world/random_world/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"),
                 ],
             )
 
@@ -168,7 +170,7 @@ def generate_launch_description():
                 output="screen",
             )
 
-            # Custom depth → fake laser scan (handles 87° FOV, camera pitch)
+            # Depth → laser scan — kept for LLM/SCT use, LiDAR is now the primary scan for Nav2
             depth_to_scan = Node(
                 package="swarm_basics",
                 executable="depth_to_scan_custom",
@@ -180,6 +182,7 @@ def generate_launch_description():
                 output="screen",
             )
 
+            # All per-robot nodes: LiDAR + RealSense + bump + odom + depth_to_scan
             nodes += [state_pub, spawn_node, cpp_node, bump_node, odom_tf_node, depth_to_scan]
 
         return nodes

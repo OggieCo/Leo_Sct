@@ -9,6 +9,15 @@ def generate_launch_description():
     slam_config = os.path.join(pkg, 'config', 'nav2', 'slam_toolbox.yaml')
 
     return LaunchDescription([
+        # === Static TF: bridge Gazebo's mangled LiDAR frame to the real link ===
+        Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='lidar_frame_bridge',
+            arguments=['0', '0', '0.1', '0', '0', '0',
+                       'robot_0/robot_0/base_footprint/lidar', 'robot_0/base_footprint'],
+        ),
+
         # === SLAM Toolbox — builds map & localizes on the fly ===
         # No pre-made map needed; drives around to explore the random world
         # Publishes map → odom TF, and occupancy grid on /map
@@ -22,11 +31,11 @@ def generate_launch_description():
                     'map_frame': 'map',
                     'odom_frame': 'robot_0/odom',
                     'base_frame': 'robot_0/base_footprint',
-                    'laser_frame': 'robot_0/realsense_link',
+                    'laser_frame': 'robot_0/base_footprint/lidar',
                 },
             ],
             remappings=[
-                ('scan', '/robot_0/scan'),
+                ('scan', '/robot_0/lidar/scan'),
             ],
             output='screen',
         ),

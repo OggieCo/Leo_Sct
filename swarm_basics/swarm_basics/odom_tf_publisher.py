@@ -12,6 +12,7 @@ class OdomTfPublisher(Node):
         self.ns = self.get_namespace().strip('/')
         self.odom_frame = f"{self.ns}/odom" if self.ns else "odom"
         self.base_frame = f"{self.ns}/base_footprint" if self.ns else "base_footprint"
+        self.map_frame = "map"
         
         # Subscribe to namespaced odometry data
         self.subscription = self.create_subscription(

@@ -17,7 +17,7 @@ def generate_launch_description():
         Node(
              package='nav2_amcl', executable='amcl', name='amcl',
              parameters=[params], output='screen',
-             remappings=[('/scan', '/robot_0/scan')]
+             remappings=[('/scan', '/robot_0/lidar/scan')]
              ),
         
         # Planner

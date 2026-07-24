@@ -89,7 +89,7 @@ with open(world_file, "w") as f:
     <plugin
       filename="ignition-gazebo-sensors-system"
       name="ignition::gazebo::systems::Sensors">
-      <render_engine>ogre</render_engine>
+      <render_engine>ogre2</render_engine>
     </plugin>
     <plugin
       filename="ignition-gazebo-user-commands-system"

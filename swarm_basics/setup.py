@@ -19,8 +19,12 @@ setup(
 
         #slam toolbox config/launch files
         ('share/' + package_name + '/launch', ['launch/nav2_slam.launch.py']),
+        ('share/' + package_name + '/launch', ['launch/nav2_slam_all.launch.py']),
         ('share/' + package_name + '/launch', ['launch/slam_toolbox.launch.py']),
+        ('share/' + package_name + '/launch', ['launch/nav2_nomap.launch.py']),
         ('share/' + package_name + '/config/nav2', ['config/nav2/slam_toolbox.yaml']),
+        ('share/' + package_name + '/config/nav2', ['config/nav2/robot_0_nav2_nomap.yaml']),
+        ('share/' + package_name + '/config/nav2', ['config/nav2/nav2_generic.yaml']),
 
         ('share/' + package_name + '/config', ['config/supervisor.yaml']),
         ('share/' + package_name + '/config', ['config/supervisor2.yaml']),
@@ -46,6 +50,7 @@ setup(
             'depth_to_scan_custom = swarm_basics.depth_to_scan:main',
             'set_initial_pose = swarm_basics.set_initial_pose:main',
             'random_walk = swarm_basics.random_walk:main',
+            'random_goals = swarm_basics.random_goals:main',
         ],
     },
 )
