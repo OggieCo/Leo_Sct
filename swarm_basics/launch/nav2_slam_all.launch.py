@@ -10,43 +10,48 @@ from swarm_basics.robot_config import ROBOT_POSITIONS
 
 
 def load_common():
-    """Load params from nav2_generic.yaml, strip the /**/ros__parameters wrapper."""
+    """Load params from nav2_generic.yaml: /** flat params + nested costmap sections."""
     pkg = get_package_share_directory('swarm_basics')
     path = os.path.join(pkg, 'config', 'nav2', 'nav2_generic.yaml')
     with open(path) as f:
         raw = yaml.safe_load(f)
-    # raw = {'/**': {'ros__parameters': {...}}}
-    return raw.get('/**', {}).get('ros__parameters', {})
+
+    params = dict(raw.get('/**', {}).get('ros__parameters', {}))
+    # Costmap config lives in top-level nested sections — merge them in so the
+    # costmap sub-nodes receive plugins/layers/frames (not just defaults).
+    for section in ('global_costmap', 'local_costmap'):
+        if section in raw:
+            params[section] = raw[section]
+    return params
 
 
 def per_robot_params(ns):
-    """Return a single flat dict: common + per-robot overrides."""
+    """Return a single dict: common + per-robot overrides (nested for costmaps)."""
     bf = f'{ns}/base_footprint'
     of = f'{ns}/odom'
-    scan = f'/{ns}/lidar/scan'
+    scan = f'/{ns}/lidar/scan_clean'
 
     p = load_common()
 
-    # Global costmap: shared 'map' frame and topic
-    p['global_costmap.global_costmap.ros__parameters.global_frame'] = 'map'
-    p['global_costmap.global_costmap.ros__parameters.robot_base_frame'] = bf
-    p['global_costmap.global_costmap.ros__parameters.obstacle_layer.scan.topic'] = scan
-    p['global_costmap.global_costmap.ros__parameters.static_layer.map_topic'] = '/map'
-    p['local_costmap.local_costmap.ros__parameters.global_frame'] = of
-    p['local_costmap.local_costmap.ros__parameters.robot_base_frame'] = bf
-    p['local_costmap.local_costmap.ros__parameters.obstacle_layer.scan.topic'] = scan
+    # ---- Global costmap: shared 'map' frame + shared map topic ----
+    gc = p['global_costmap']['global_costmap']['ros__parameters']
+    gc['global_frame'] = 'map'
+    gc['robot_base_frame'] = bf
+    gc['static_layer']['map_topic'] = '/map'
+    gc['obstacle_layer']['scan']['topic'] = scan
 
-    # Controller local costmap
-    p['local_costmap.local_costmap.ros__parameters.global_frame'] = of
-    p['local_costmap.local_costmap.ros__parameters.robot_base_frame'] = bf
-    p['local_costmap.local_costmap.ros__parameters.obstacle_layer.scan.topic'] = scan
+    # ---- Local costmap ----
+    lc = p['local_costmap']['local_costmap']['ros__parameters']
+    lc['global_frame'] = of
+    lc['robot_base_frame'] = bf
+    lc['obstacle_layer']['scan']['topic'] = scan
 
-    # BT Navigator
+    # ---- BT Navigator ----
     p['global_frame'] = of
     p['robot_base_frame'] = bf
     p['odom_frame'] = of
 
-    # Behavior Server
+    # ---- Behavior Server ----
     p['global_frame'] = of
     p['robot_base_frame'] = bf
 
@@ -61,21 +66,12 @@ def create_slam_nodes(context, robots):
 
     for ns, _, _, _ in robots:
         params = per_robot_params(ns)
-        scan_topic = f'/{ns}/lidar/scan'
+        # Clean scan topic: {ns}/lidar/scan_clean is republished with frame {ns}/lidar_link
+        # (lidar_republish node fixes Gazebo's mangled frame)
+        scan_topic = f'/{ns}/lidar/scan_clean'
         cmd_vel_topic = f'/{ns}/cmd_vel'
         odom_topic = f'/{ns}/odom'
-        # Gazebo scan frame is {ns}/{ns}/base_footprint/lidar — match it exactly
-        gz_lidar_frame = f'{ns}/{ns}/base_footprint/lidar'
-        laser_frame = gz_lidar_frame
-
-        # Static TF: bridge whatever Gazebo produces to base_footprint
-        # Direction: base_footprint → gz_frame (so gz_frame is child, won't conflict with odom→base_footprint)
-        nodes.append(Node(
-            package='tf2_ros', executable='static_transform_publisher',
-            name=f'{ns}_lidar_frame_bridge',
-            arguments=['0', '0', '0.1', '0', '0', '0',
-                       f'{ns}/base_footprint', f'{ns}/{ns}/base_footprint/lidar'],
-        ))
+        laser_frame = f'{ns}/lidar_link'
 
         # SLAM Toolbox — publishes map→{ns}/odom, occupancy grid on /map (shared)
         nodes.append(Node(

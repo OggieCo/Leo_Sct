@@ -170,6 +170,18 @@ def generate_launch_description():
                 output="screen",
             )
 
+            # LiDAR scan frame fixer: rewrites Gazebo's mangled frame to {ns}/lidar_link
+            lidar_republish_node = Node(
+                package="swarm_basics",
+                executable="lidar_republish",
+                name="lidar_republish",
+                namespace=ns,
+                parameters=[{
+                    "use_sim_time": True
+                }],
+                output="screen",
+            )
+
             # Depth → laser scan — kept for LLM/SCT use, LiDAR is now the primary scan for Nav2
             depth_to_scan = Node(
                 package="swarm_basics",
@@ -182,8 +194,8 @@ def generate_launch_description():
                 output="screen",
             )
 
-            # All per-robot nodes: LiDAR + RealSense + bump + odom + depth_to_scan
-            nodes += [state_pub, spawn_node, cpp_node, bump_node, odom_tf_node, depth_to_scan]
+            # All per-robot nodes: LiDAR + RealSense + bump + odom + lidar_republish + depth_to_scan
+            nodes += [state_pub, spawn_node, cpp_node, bump_node, odom_tf_node, lidar_republish_node, depth_to_scan]
 
         return nodes
 
