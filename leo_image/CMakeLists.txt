@@ -37,6 +37,24 @@ ament_target_dependencies(image_processor
 install(TARGETS image_processor
   DESTINATION lib/${PROJECT_NAME})
 
+# ---- Specialised human detector (depth-based person blob) ----
+add_executable(image_human_processor src/image_human_processor.cpp)
+target_include_directories(image_human_processor PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_features(image_human_processor PUBLIC c_std_99 cxx_std_17)
+
+ament_target_dependencies(image_human_processor
+  rclcpp
+  sensor_msgs
+  std_msgs
+  OpenCV
+  cv_bridge
+)
+
+install(TARGETS image_human_processor
+  DESTINATION lib/${PROJECT_NAME})
+
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights

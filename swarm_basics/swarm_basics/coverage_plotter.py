@@ -3,6 +3,11 @@ from rclpy.node import Node
 from tf2_msgs.msg import TFMessage
 from std_msgs.msg import String, UInt32
 from ros_gz_interfaces.msg import Contacts
+from swarm_basics.robot_config import WORLD_NAME
+import matplotlib
+# Headless by default: the live matplotlib GUI window can't be minimized when
+# running inside the container.  Render offscreen + save PNG instead.
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from collections import defaultdict
@@ -58,7 +63,7 @@ class CoveragePlotter(Node):
         # Global ground-truth poses for all robots
         self.create_subscription(
             TFMessage,
-            '/world/random_world/dynamic_pose/info',
+            f'/world/{WORLD_NAME}/dynamic_pose/info',
             self.pose_callback,
             10,
         )
@@ -72,7 +77,7 @@ class CoveragePlotter(Node):
                 UInt32, f'/{ns}/bump_count',
                 lambda msg, ns=ns: self.bump_callback(ns, msg), 10)
             # Raw contact sensor — detailed collision logging
-            contact_topic = f"/world/random_world/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"
+            contact_topic = f"/world/{WORLD_NAME}/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"
             self.create_subscription(
                 Contacts, contact_topic,
                 lambda msg, ns=ns: self.contact_callback(ns, msg), 10)
@@ -85,8 +90,8 @@ class CoveragePlotter(Node):
         self.ax.set_aspect("equal")
         self.ax.set_xlim(self.env_min, self.env_max)
         self.ax.set_ylim(self.env_min, self.env_max)
-        plt.ion()
-        plt.show()
+        # (Agg backend: no GUI window; the coverage PNG is saved periodically)
+        self._last_save = 0.0
 
         # === TIMER FOR UPDATES ===
         self.timer = self.create_timer(0.5, self.update_plot)
@@ -230,8 +235,14 @@ class CoveragePlotter(Node):
             verticalalignment='top',
             bbox=dict(facecolor='white', alpha=0.6, edgecolor='none')
         )
+        # headless: render offscreen and periodically save the coverage PNG so
+        # the map is still watchable as a file (no unstoppable GUI window).
         plt.draw()
-        plt.pause(0.01)
+        now = self.get_clock().now().nanoseconds / 1e9
+        if now - self._last_save > 2.0:
+            self._last_save = now
+            self.fig.savefig(self.save_path)
+            self.fig.savefig(self.csv_dir / 'coverage_map.png', dpi=150)
 
     def save_final_plot(self):
         """Save final coverage plot."""

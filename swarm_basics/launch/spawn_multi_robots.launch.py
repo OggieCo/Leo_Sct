@@ -3,13 +3,20 @@ import xacro
 
 from launch import LaunchDescription
 from launch.actions import OpaqueFunction
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
 # Load robot positions from shared config (edit robot_config.py to add/remove robots)
-from swarm_basics.robot_config import ROBOT_POSITIONS
+from swarm_basics.robot_config import ROBOT_POSITIONS, WORLD_NAME
 
 def generate_launch_description():
+
+    # detector: 'depth' (image_human_processor heuristics) or 'yolo' (YOLOv8)
+    detector_arg = DeclareLaunchArgument(
+        'detector', default_value='depth',
+        description='Human detector backend: depth or yolo')
 
     leo_description = get_package_share_directory("leo_description")
 
@@ -29,10 +36,12 @@ def generate_launch_description():
             output="screen"
     )       
  
+    detector = LaunchConfiguration('detector')
 
     # --- Function to create all robot nodes ---
     def create_all_robot_nodes(context, robots):
         nodes = []
+        det = context.perform_substitution(detector)   # 'depth' or 'yolo'
 
         # --- One bridge for all robots ---
         bridge_args = []
@@ -61,7 +70,7 @@ def generate_launch_description():
                 f"/{ns}/depth_camera/image@sensor_msgs/msg/Image@ignition.msgs.Image",
 
                 # ⬇ IN: Gazebo collision sensor → bridge → bump_counter logs "ouch, I hit something"
-                f"/world/random_world/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"
+                f"/world/{WORLD_NAME}/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"
                 f"@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
 
                 # ⬇ IN: Gazebo wheel positions → bridge → robot_state_publisher → TF → RViz shows spinning wheels
@@ -70,7 +79,7 @@ def generate_launch_description():
 
         # ⬇ IN: Global pose topic for coverage_plotter
         bridge_args += [
-            "/world/random_world/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V"
+            f"/world/{WORLD_NAME}/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V"
         ]    
 
         bridge_node = Node(
@@ -138,14 +147,39 @@ def generate_launch_description():
             #)
 
             # Image processor — depth camera → zone detection (CLEAR/LEFT/RIGHT/CORNER)
-            cpp_node = Node(
-                package="leo_image",
-                executable="image_processor",
-                name="image_processor",
-                namespace=ns,
-                parameters=[{"enable_gui": False}],
-                output="screen"
-            )
+            # NOTE: superseded by image_human_processor (real human detection);
+            # nothing subscribes to its detected_zones topic, so it is disabled
+            # to reduce log noise. Re-enable if the band detector is needed.
+            # cpp_node = Node(
+            #     package="leo_image",
+            #     executable="image_processor",
+            #     name="image_processor",
+            #     namespace=ns,
+            #     parameters=[{"enable_gui": False}],
+            #     output="screen"
+            # )
+
+            # Human detector — pick backend via `detector` arg:
+            #   depth = image_human_processor (blob heuristics, leo_image)
+            #   yolo  = yolo_human_processor (YOLOv8n on RGB + depth ranging)
+            # Both publish human_detected / human_close / human_distance / human_angle.
+            if det == 'yolo':
+                human_node = Node(
+                    package="swarm_basics",
+                    executable="yolo_human_processor",
+                    name="yolo_human_processor",
+                    namespace=ns,
+                    output="screen"
+                )
+            else:
+                human_node = Node(
+                    package="leo_image",
+                    executable="image_human_processor",
+                    name="image_human_processor",
+                    namespace=ns,
+                    parameters=[{"enable_gui": False}],
+                    output="screen"
+                )
 
             bump_node = Node(
                 package="swarm_basics",
@@ -154,7 +188,7 @@ def generate_launch_description():
                 namespace=ns,
                 output="screen",
                 remappings=[
-                    ('contact', f"/world/random_world/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"),
+                    ('contact', f"/world/{WORLD_NAME}/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"),
                 ],
             )
 
@@ -194,12 +228,13 @@ def generate_launch_description():
                 output="screen",
             )
 
-            # All per-robot nodes: LiDAR + RealSense + bump + odom + lidar_republish + depth_to_scan
-            nodes += [state_pub, spawn_node, cpp_node, bump_node, odom_tf_node, lidar_republish_node, depth_to_scan]
+            # All per-robot nodes: LiDAR + RealSense + bump + odom + lidar_republish + depth_to_scan + human detector
+            nodes += [state_pub, spawn_node, human_node, bump_node, odom_tf_node, lidar_republish_node, depth_to_scan]
 
         return nodes
 
     return LaunchDescription([
+        detector_arg,
         plot_node,
         OpaqueFunction(function=lambda context: create_all_robot_nodes(context, robots_to_spawn))
     ])

@@ -533,8 +533,9 @@
             <center>0.5 0.5</center>
           </distortion>
           <image>
-            <width>64</width>
-            <height>48</height>
+            <!-- Old values were 64 for width and 48 for height -->
+            <width>640</width>
+            <height>480</height>
             <format>R8G8B8</format>
           </image>
           <clip>

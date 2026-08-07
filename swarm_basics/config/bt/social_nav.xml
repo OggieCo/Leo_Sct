@@ -1,0 +1,69 @@
+<!--
+  social_nav.xml - Socially-aware navigation Behavior Tree.
+
+  STRUCTURE (2026-08-06):
+    - PipelineSequence (Nav2 standard) for correct 1 Hz replanning.  A root
+      SequenceStar was tried but it floods ComputePathToPose (RateController
+      gating resets every re-tick) -> planner timeouts -> recovery chaos.
+    - IsHumanClose lives INSIDE the ReactiveFallback's first branch:
+      ReactiveFallback re-evaluates its first child EVERY tick, so IsHumanClose
+      is ticked continuously WITHOUT disturbing the replan rate.
+    - TimeOut(7 s) on the yield: if the human never moves, give up after 7 s
+      and continue toward the goal.
+
+  SOCIAL LAYER:
+    * YIELD   - {human_close} true -> stop & wait (Wait 1 s, looped).
+    * RESUME  - human gone -> FollowPath immediately.
+    * TIMEOUT - human still there after 7 s -> continue toward the goal.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <!-- Replan global path periodically at 1 Hz -->
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+
+        <!-- SOCIAL FOLLOW: yield to humans, otherwise follow the path -->
+        <RecoveryNode number_of_retries="1" name="SocialFollow">
+          <ReactiveFallback name="HumanAwareFollow">
+            <!-- YIELD BRANCH: ticked EVERY tick (ReactiveFallback re-evaluates
+                 child 0).  IsHumanClose refreshes {human_close} on the
+                 blackboard; TimeOut gives up after 7 s if the human stays. -->
+            <Timeout msec="7000" name="YieldMax7s">
+              <KeepRunningUntilFailure name="YieldToHuman">
+                <Sequence name="YieldCheck">
+                  <IsHumanClose/>
+                  <BlackboardCheckBool value_A="{human_close}" value_B="true" return_on_mismatch="FAILURE">
+                    <Wait wait_duration="1.0"/>
+                  </BlackboardCheckBool>
+                </Sequence>
+              </KeepRunningUntilFailure>
+            </Timeout>
+            <!-- NORMAL BRANCH: no human close (or human gone / 7 s up) -->
+            <FollowPath path="{path}" controller_id="FollowPath"/>
+          </ReactiveFallback>
+          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+
+      <!-- Recovery fallback when stuck / planning fails -->
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearingActions">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <Spin spin_dist="1.57"/>
+          <Wait wait_duration="5"/>
+          <BackUp backup_dist="0.30" backup_speed="0.05"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

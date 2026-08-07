@@ -57,8 +57,9 @@ def generate_launch_description():
     sim_world = DeclareLaunchArgument(
         "sim_world",
         #default_value=os.path.join(pkg_project_gazebo, "worlds", "random_world.sdf"),
+        #default_value=os.path.join(pkg_project_gazebo, "worlds", "human_world.sdf"),
         #default_value=os.path.join(pkg_project_worlds, "worlds", "corridor.sdf"),
-        default_value=os.path.join(pkg_project_gazebo, "worlds", "random_world.sdf"),
+        default_value=os.path.join(pkg_project_gazebo, "worlds", "random_world_humans.sdf"),
         description="Path to the Gazebo world file",
     )
 
@@ -74,6 +75,12 @@ def generate_launch_description():
         description="Run Gazebo without GUI (true/false)",
     )
 
+    detector_arg = DeclareLaunchArgument(
+        "detector",
+        default_value="depth",
+        description="Human detector backend: depth (heuristics) or yolo (YOLOv8)",
+    )
+
     # Setup to launch the simulator and Gazebo world
     gz_sim = OpaqueFunction(function=launch_gz)
 
@@ -81,7 +88,10 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(pkg_project_gazebo, "launch", "spawn_multi_robots.launch.py")
         ),
-        launch_arguments={"robot_ns": LaunchConfiguration("robot_ns")}.items(),
+        launch_arguments={
+            "robot_ns": LaunchConfiguration("robot_ns"),
+            "detector": LaunchConfiguration("detector"),
+        }.items(),
     )
 
     # Bridge ROS topics and Gazebo messages for establishing communication

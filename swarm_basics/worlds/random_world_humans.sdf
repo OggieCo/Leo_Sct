@@ -1,0 +1,496 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <world name="random_world_humans">
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.002</max_step_size>
+      <real_time_update_rate>200</real_time_update_rate>
+    </physics>
+
+    <plugin
+      filename="ignition-gazebo-physics-system"
+      name="ignition::gazebo::systems::Physics">
+      <include_entity_names>true</include_entity_names>
+    </plugin>
+    <plugin
+      filename="ignition-gazebo-sensors-system"
+      name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin
+      filename="ignition-gazebo-user-commands-system"
+      name="ignition::gazebo::systems::UserCommands"> <!-- do no delete -->
+    </plugin>
+    <plugin
+      filename="libignition-gazebo-contact-system.so"
+      name="ignition::gazebo::systems::Contact">
+      <topic>/world/random_world_humans/physics/contacts</topic>
+    </plugin>
+    <plugin
+      filename="ignition-gazebo-scene-broadcaster-system"
+      name="ignition::gazebo::systems::SceneBroadcaster">
+    </plugin>
+
+    <light name='sun' type='directional'>
+      <pose>0 0 10 0 -0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>-0.5 0.5 -1</direction>
+      <diffuse>1 1 1 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>10</range>
+        <linear>1</linear>
+        <constant>1</constant>
+        <quadratic>0</quadratic>
+      </attenuation>
+    </light>
+
+    <model name='ground_plane'>
+      <static>true</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>50 50</size>
+            </plane>
+          </geometry>
+          <surface><friction><ode/></friction></surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>50 50</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="north_wall">
+      <pose>0 7.25 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>20 0.5 2.0</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>20 0.5 2.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="south_wall">
+      <pose>0 -7.25 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>20 0.5 2.0</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>20 0.5 2.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="east_wall">
+      <pose>7.25 0 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.5 20 2.0</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.5 20 2.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="west_wall">
+      <pose>-7.25 0 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.5 20 2.0</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.5 20 2.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="box0">
+      <pose>-3.4711753276613644 2.9655523441136538 0.45627198877683944 0 0 4.251828276751594</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>1.4591401976868257 0.5375161328340003 0.9125439775536789</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>1.4591401976868257 0.5375161328340003 0.9125439775536789</size></box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.0 1.0 1</ambient>
+            <diffuse>0.5 0.0 1.0 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="box1">
+      <pose>-3.6203181736595598 0.06890712004312771 0.2723479145785528 0 0 0.16673041482941486</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.6304082489441243 1.1328827295279056 0.5446958291571056</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.6304082489441243 1.1328827295279056 0.5446958291571056</size></box>
+          </geometry>
+          <material>
+            <ambient>0.0 1.0 0.0 1</ambient>
+            <diffuse>0.0 1.0 0.0 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="box2">
+      <pose>-0.6311268966382837 -2.7561957340331436 0.564639865721244 0 0 5.461975003132664</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>1.574029419383605 1.5519874603853538 1.129279731442488</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>1.574029419383605 1.5519874603853538 1.129279731442488</size></box>
+          </geometry>
+          <material>
+            <ambient>0.0 1.0 0.0 1</ambient>
+            <diffuse>0.0 1.0 0.0 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="box3">
+      <pose>5.69357878837482 -2.034853962860269 0.3666096248588362 0 0 0.5827393204281245</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>1.5472090924823403 1.0103757747769877 0.7332192497176724</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>1.5472090924823403 1.0103757747769877 0.7332192497176724</size></box>
+          </geometry>
+          <material>
+            <ambient>1.0 0.0 0.0 1</ambient>
+            <diffuse>1.0 0.0 0.0 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="box4">
+      <pose>-4.862827294032179 5.473594525831867 0.44839065041650983 0 0 0.49511624676940946</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>1.0384690707269426 1.0159335837184567 0.8967813008330197</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>1.0384690707269426 1.0159335837184567 0.8967813008330197</size></box>
+          </geometry>
+          <material>
+            <ambient>0.0 0.0 1.0 1</ambient>
+            <diffuse>0.0 0.0 1.0 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="cylinder0">
+      <pose>4.4268705178700625 0.9467000243483046 0.7138898142731845 0 0 4.426955409158149</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>0.8805832649770964</radius><length>1.427779628546369</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>0.8805832649770964</radius><length>1.427779628546369</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>1.0 0.0 0.0 1</ambient>
+            <diffuse>1.0 0.0 0.0 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="cylinder1">
+      <pose>6.0527655066645085 4.43231545612082 0.829801255591519 0 0 5.444277443867803</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>0.7628843229973971</radius><length>1.659602511183038</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>0.7628843229973971</radius><length>1.659602511183038</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>1.0 0.2 0.0 1</ambient>
+            <diffuse>1.0 0.2 0.0 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="cylinder2">
+      <pose>-3.7795566593936267 -3.0318135643684845 0.7267633331983001 0 0 5.8851743434174955</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>0.49458152217706447</radius><length>1.4535266663966002</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>0.49458152217706447</radius><length>1.4535266663966002</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>0.0 0.8 1.0 1</ambient>
+            <diffuse>0.0 0.8 1.0 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="human0">
+      <static>true</static>
+      <pose>-5.743206371647453 1.8087090618406068 0 0 0 3.3560998273317724</pose>
+      <link name="body">
+        <visual name="visual">
+          <pose>0 0 1.0 0 0 0</pose>
+          <geometry>
+            <mesh>
+              <uri>file:///usr/share/gazebo-11/media/models/stand.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.3</radius>
+              <length>1.7</length>
+            </cylinder>
+          </geometry>
+          <pose>0 0 0.85 0 0 0</pose>
+        </collision>
+      </link>
+    </model>
+
+    <model name="human1">
+      <static>true</static>
+      <pose>2.5213702430063973 -3.757156668798396 0 0 0 2.03752851225037</pose>
+      <link name="body">
+        <visual name="visual">
+          <pose>0 0 1.0 0 0 0</pose>
+          <geometry>
+            <mesh>
+              <uri>file:///usr/share/gazebo-11/media/models/stand.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.3</radius>
+              <length>1.7</length>
+            </cylinder>
+          </geometry>
+          <pose>0 0 0.85 0 0 0</pose>
+        </collision>
+      </link>
+    </model>
+
+    <model name="human2">
+      <static>true</static>
+      <pose>3.595401939737788 -5.950431502839596 0 0 0 5.163537984065649</pose>
+      <link name="body">
+        <visual name="visual">
+          <pose>0 0 1.0 0 0 0</pose>
+          <geometry>
+            <mesh>
+              <uri>file:///usr/share/gazebo-11/media/models/stand.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.3</radius>
+              <length>1.7</length>
+            </cylinder>
+          </geometry>
+          <pose>0 0 0.85 0 0 0</pose>
+        </collision>
+      </link>
+    </model>
+
+    <model name="human3">
+      <static>true</static>
+      <pose>0.90021268981193 2.9200512276342776 0 0 0 1.3359719775173493</pose>
+      <link name="body">
+        <visual name="visual">
+          <pose>0 0 1.0 0 0 0</pose>
+          <geometry>
+            <mesh>
+              <uri>file:///usr/share/gazebo-11/media/models/stand.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.3</radius>
+              <length>1.7</length>
+            </cylinder>
+          </geometry>
+          <pose>0 0 0.85 0 0 0</pose>
+        </collision>
+      </link>
+    </model>
+
+    <model name="human4">
+      <static>true</static>
+      <pose>-0.010301122803483942 5.154754262081814 0 0 0 4.039157425536224</pose>
+      <link name="body">
+        <visual name="visual">
+          <pose>0 0 1.0 0 0 0</pose>
+          <geometry>
+            <mesh>
+              <uri>file:///usr/share/gazebo-11/media/models/stand.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.3</radius>
+              <length>1.7</length>
+            </cylinder>
+          </geometry>
+          <pose>0 0 0.85 0 0 0</pose>
+        </collision>
+      </link>
+    </model>
+
+    <model name="human5">
+      <static>true</static>
+      <pose>6.664165425054757 -4.846354618462532 0 0 0 3.100851442638996</pose>
+      <link name="body">
+        <visual name="visual">
+          <pose>0 0 1.0 0 0 0</pose>
+          <geometry>
+            <mesh>
+              <uri>file:///usr/share/gazebo-11/media/models/stand.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.3</radius>
+              <length>1.7</length>
+            </cylinder>
+          </geometry>
+          <pose>0 0 0.85 0 0 0</pose>
+        </collision>
+      </link>
+    </model>
+
+    <model name="human6">
+      <static>true</static>
+      <pose>3.427480910952087 4.8387789895333215 0 0 0 0.9603303320589369</pose>
+      <link name="body">
+        <visual name="visual">
+          <pose>0 0 1.0 0 0 0</pose>
+          <geometry>
+            <mesh>
+              <uri>file:///usr/share/gazebo-11/media/models/stand.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.3</radius>
+              <length>1.7</length>
+            </cylinder>
+          </geometry>
+          <pose>0 0 0.85 0 0 0</pose>
+        </collision>
+      </link>
+    </model>
+
+  </world>
+</sdf>

@@ -1,0 +1,184 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <world name="human_world">
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.002</max_step_size>
+      <real_time_update_rate>200</real_time_update_rate>
+    </physics>
+
+    <plugin
+      filename="ignition-gazebo-physics-system"
+      name="ignition::gazebo::systems::Physics">
+      <include_entity_names>true</include_entity_names>
+    </plugin>
+    <plugin
+      filename="ignition-gazebo-sensors-system"
+      name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin
+      filename="ignition-gazebo-user-commands-system"
+      name="ignition::gazebo::systems::UserCommands"> <!-- do no delete -->
+    </plugin>
+    <plugin
+      filename="libignition-gazebo-contact-system.so"
+      name="ignition::gazebo::systems::Contact">
+      <topic>/world/human_world/physics/contacts</topic>
+    </plugin>
+    <plugin
+      filename="ignition-gazebo-scene-broadcaster-system"
+      name="ignition::gazebo::systems::SceneBroadcaster">
+    </plugin>
+
+    <light name='sun' type='directional'>
+      <pose>0 0 10 0 -0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>-0.5 0.5 -1</direction>
+      <diffuse>1 1 1 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>10</range>
+        <linear>1</linear>
+        <constant>1</constant>
+        <quadratic>0</quadratic>
+      </attenuation>
+    </light>
+
+    <model name='ground_plane'>
+      <static>true</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>50 50</size>
+            </plane>
+          </geometry>
+          <surface><friction><ode/></friction></surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>50 50</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="north_wall">
+      <pose>0 7.25 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>20 0.5 2.0</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>20 0.5 2.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="south_wall">
+      <pose>0 -7.25 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>20 0.5 2.0</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>20 0.5 2.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="east_wall">
+      <pose>7.25 0 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.5 20 2.0</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.5 20 2.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <model name="west_wall">
+      <pose>-7.25 0 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.5 20 2.0</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.5 20 2.0</size></box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <static>true</static>
+    </model>
+
+    <actor name="human_waiting">
+      <skin>
+        <filename>/usr/share/gazebo-11/media/models/walk.dae</filename>
+        <scale>1.0</scale>
+      </skin>
+      <animation name="walk">
+        <filename>/usr/share/gazebo-11/media/models/walk.dae</filename>
+        <scale>1.0</scale>
+        <interpolate_x>true</interpolate_x>
+      </animation>
+      <script>
+        <loop>true</loop>
+        <delay_start>1.0</delay_start>
+        <auto_start>true</auto_start>
+        <trajectory id="0" type="LINEAR">
+          <waypoint><time>0</time><pose>3.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>30.0</time><pose>3.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>40.0</time><pose>3.0 -3.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>50.0</time><pose>3.0 3.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>60.0</time><pose>3.0 0.0 1.0 0 0 0</pose></waypoint>
+        </trajectory>
+      </script>
+    </actor>
+
+  </world>
+</sdf>

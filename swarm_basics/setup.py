@@ -20,16 +20,24 @@ setup(
         #slam toolbox config/launch files
         ('share/' + package_name + '/launch', ['launch/nav2_slam.launch.py']),
         ('share/' + package_name + '/launch', ['launch/nav2_slam_all.launch.py']),
+        ('share/' + package_name + '/launch', ['launch/random_walk_all.launch.py']),
+        ('share/' + package_name + '/launch', ['launch/random_goals_all.launch.py']),
         ('share/' + package_name + '/launch', ['launch/slam_toolbox.launch.py']),
         ('share/' + package_name + '/config/nav2', ['config/nav2/slam_toolbox.yaml']),
         ('share/' + package_name + '/config/nav2', ['config/nav2/nav2_generic.yaml']),
+
+        #behavior tree files (social_nav.xml is the active runtime tree)
+        ('share/' + package_name + '/config/bt', ['config/bt/social_nav.xml']),
+        ('share/' + package_name + '/config/bt', ['config/bt/navigate_to_pose_w_replanning_and_recovery.xml']),
 
         ('share/' + package_name + '/config', ['config/supervisor.yaml']),
         ('share/' + package_name + '/config', ['config/supervisor2.yaml']),
         ('share/' + package_name + '/config', ['config/sup_gpt.yaml']),
         ('share/' + package_name + '/config', ['config/cylinder_positions.json']),
         ('share/' + package_name + '/worlds', ['worlds/random_world.sdf']),
+        ('share/' + package_name + '/worlds', ['worlds/human_world.sdf']),
         ('share/' + package_name + '/worlds', ['worlds/corridor_with_cube.sdf']),
+        ('share/' + package_name + '/worlds', ['worlds/random_world_humans.sdf']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -50,6 +58,8 @@ setup(
             'set_initial_pose = swarm_basics.set_initial_pose:main',
             'random_walk = swarm_basics.random_walk:main',
             'random_goals = swarm_basics.random_goals:main',
+            'yolo_human_processor = swarm_basics.yolo_human_processor:main',
+            'send_goal = swarm_basics.send_goal:main',
         ],
     },
 )
