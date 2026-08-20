@@ -8,13 +8,13 @@
     - IsHumanClose lives INSIDE the ReactiveFallback first branch:
       ReactiveFallback re-evaluates its first child EVERY tick, so IsHumanClose
       is ticked continuously WITHOUT disturbing the replan rate.
-    - TimeOut(7 s) on the yield: if the human never moves, give up after 7 s
+    - TimeOut(4 s) on the yield: if the human never moves, give up after 4 s
       and continue toward the goal.
 
   SOCIAL LAYER:
     * YIELD   - {human_close} true -> stop & wait (Wait 1 s, looped).
     * RESUME  - human gone -> FollowPath immediately.
-    * TIMEOUT - human still there after 7 s -> continue toward the goal.
+    * TIMEOUT - human still there after 4 s -> continue toward the goal.
 
   ROBOT-ROBOT LAYER (2026-08-17):
     * IsRobotClose mirrors IsHumanClose but uses the proximity layer
@@ -40,8 +40,8 @@
         <RecoveryNode number_of_retries="1" name="SocialFollow">
           <ReactiveFallback name="HumanAwareFollow">
             <!-- YIELD BRANCH (human): ticked EVERY tick.  IsHumanClose
-                 refreshes {human_close}; TimeOut gives up after 7 s. -->
-            <Timeout msec="7000" name="YieldMax7s">
+                 refreshes {human_close}; TimeOut gives up after 4 s. -->
+            <Timeout msec="4000" name="YieldMax4s">
               <KeepRunningUntilFailure name="YieldToHuman">
                 <Sequence name="YieldCheck">
                   <IsHumanClose/>
@@ -54,7 +54,7 @@
             <!-- ROBOT-AWARE SUB-TREE: nested fallback so each ReactiveFallback
                  has at most two async children (one yield + FollowPath) -->
             <ReactiveFallback name="RobotAwareFollow">
-              <Timeout msec="7000" name="RobotYieldMax">
+              <Timeout msec="4000" name="RobotYieldMax">
                 <KeepRunningUntilFailure name="YieldToRobot">
                   <Sequence name="RobotYieldCheck">
                     <IsRobotClose/>

@@ -7,8 +7,8 @@
 //
 //   * yield when a robot is close AND its bearing is inside the block cone
 //     (±block_angle_deg, default 30°),
-//   * keep yielding up to yield_max_s (default 7 s), then stop,
-//   * enter a cooldown (cooldown_s, default 6 s) before it can yield again.
+//   * keep yielding up to yield_max_s (default 4 s), then stop,
+//   * enter a cooldown (cooldown_s, default 4 s) before it can yield again.
 //
 // Writes the decision into blackboard keys `robot_close` (bool, true while
 // yielding) and `robot_angle` (float) for the tree's BlackboardCheckBool.
@@ -47,7 +47,7 @@ public:
     robot_close_(false), robot_angle_(0.0),
     yielding_(false), suppressing_(false),
     yield_started_s_(0.0), suppress_until_s_(0.0),
-    block_angle_deg_(30.0), yield_max_s_(7.0), cooldown_s_(6.0)
+    block_angle_deg_(30.0), yield_max_s_(4.0), cooldown_s_(4.0)
   {
     rclcpp::Node::SharedPtr node;
     if (config().blackboard->get("node", node) && node) {
@@ -134,7 +134,7 @@ public:
 
     // Feed the tree: robot_close true while we are actually yielding.
     config().blackboard->set("robot_close", yielding_);
-    config().blackboard->set("robot_angle", robot_angle_);
+    config().blackboard->set("robot_angle", static_cast<double>(robot_angle_));
 
     return BT::NodeStatus::SUCCESS;
   }

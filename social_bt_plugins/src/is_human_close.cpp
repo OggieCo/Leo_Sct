@@ -21,8 +21,8 @@
  *
  *   * yield when a human is close AND inside the block cone
  *     (±block_angle_deg, default 20°),
- *   * keep yielding up to yield_max_s (default 7 s), then stop,
- *   * enter a cooldown (cooldown_s, default 6 s) before it can yield again.
+ *   * keep yielding up to yield_max_s (default 4 s), then stop,
+ *   * enter a cooldown (cooldown_s, default 4 s) before it can yield again.
  *
  * SIDE humans (outside the cone) do NOT trigger the hard yield — they are left
  * to the velocity_adaptor, which smoothly slows the robot instead.  Frontal
@@ -48,7 +48,7 @@ public:
     human_close_(false), human_angle_(0.0),
     yielding_(false), suppressing_(false),
     yield_started_s_(0.0), suppress_until_s_(0.0),
-    block_angle_deg_(20.0), yield_max_s_(7.0), cooldown_s_(6.0)
+    block_angle_deg_(20.0), yield_max_s_(4.0), cooldown_s_(4.0)
   {
     rclcpp::Node::SharedPtr node;
     if (config().blackboard->get("node", node) && node) {
@@ -133,7 +133,7 @@ public:
 
     // Feed the tree: human_close true only while we are actually yielding.
     config().blackboard->set("human_close", yielding_);
-    config().blackboard->set("human_angle", human_angle_);
+    config().blackboard->set("human_angle", static_cast<double>(human_angle_));
 
     return BT::NodeStatus::SUCCESS;
   }
