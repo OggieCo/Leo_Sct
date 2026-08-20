@@ -33,11 +33,11 @@
     FollowPath.debug_trajectory_details: True
     FollowPath.min_vel_x: 0.0
     FollowPath.min_vel_y: 0.0
-    FollowPath.max_vel_x: 0.26
+    FollowPath.max_vel_x: 0.5
     FollowPath.max_vel_y: 0.0
     FollowPath.max_vel_theta: 1.0
     FollowPath.min_speed_xy: 0.0
-    FollowPath.max_speed_xy: 0.26
+    FollowPath.max_speed_xy: 0.5
     FollowPath.min_speed_theta: 0.0
     FollowPath.acc_lim_x: 2.5
     FollowPath.acc_lim_y: 0.0
@@ -77,6 +77,7 @@
     - nav2_back_up_action_bt_node
     - nav2_spin_action_bt_node
     - nav2_wait_action_bt_node
+    - nav2_drive_on_heading_bt_node
     - nav2_clear_costmap_service_bt_node
     - nav2_is_stuck_condition_bt_node
     - nav2_goal_reached_condition_bt_node

@@ -44,8 +44,8 @@ class VelocityAdaptor(Node):
         self.declare_parameter('rate_min_factor', 0.15)
 
         # Robot-robot proximity (from robot_proximity, same namespace)
-        self.declare_parameter('rd_stop', 0.6)        # m  -> scale 0 near another rover
-        self.declare_parameter('rd_slow', 3.0)        # m  -> start slowing near another rover
+        self.declare_parameter('rd_stop', 1.0)        # m  -> scale 0 near another rover
+        self.declare_parameter('rd_slow', 5.0)        # m  -> start slowing near another rover
 
         # Nav2 controller now publishes to cmd_vel_social (see nav2_slam_all)
         self._sub_cmd = self.create_subscription(Twist, 'cmd_vel_social', self.cmd_cb, 10)
@@ -145,7 +145,10 @@ class VelocityAdaptor(Node):
             return 1.0
         rd_stop = self.get_parameter('rd_stop').value
         rd_slow = self.get_parameter('rd_slow').value
-        d_term = min(max((d - rd_stop) / (rd_slow - rd_stop), 0.0), 1.0)
+        # sqrt profile -> roughly constant deceleration (smooth gradient stop)
+        # instead of a linear ramp that brakes harder and harder near rd_stop.
+        t = min(max((d - rd_stop) / (rd_slow - rd_stop), 0.0), 1.0)
+        d_term = math.sqrt(t)
         # angle: 1.0 dead ahead, 0.5 at +/-90 deg (crossing), never 0 from side
         a = min(abs(self._robot_angle), 90.0)
         a_term = 0.5 + 0.5 * math.cos(math.radians(a))

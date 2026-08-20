@@ -6,9 +6,9 @@
 // whether THIS robot should yield to another robot:
 //
 //   * yield when a robot is close AND its bearing is inside the block cone
-//     (±block_angle_deg, default 30°),
+//     (±block_angle_deg, default 20°),
 //   * keep yielding up to yield_max_s (default 4 s), then stop,
-//   * enter a cooldown (cooldown_s, default 4 s) before it can yield again.
+//   * enter a cooldown (cooldown_s, default 8 s) before it can yield again.
 //
 // Writes the decision into blackboard keys `robot_close` (bool, true while
 // yielding) and `robot_angle` (float) for the tree's BlackboardCheckBool.
@@ -47,7 +47,7 @@ public:
     robot_close_(false), robot_angle_(0.0),
     yielding_(false), suppressing_(false),
     yield_started_s_(0.0), suppress_until_s_(0.0),
-    block_angle_deg_(30.0), yield_max_s_(4.0), cooldown_s_(4.0)
+    block_angle_deg_(20.0), yield_max_s_(4.0), cooldown_s_(8.0)
   {
     rclcpp::Node::SharedPtr node;
     if (config().blackboard->get("node", node) && node) {
@@ -106,6 +106,7 @@ public:
     if (suppressing_ && now >= suppress_until_s_) {
       suppressing_ = false;
       publish_event("ROBOT_SUPPRESS_END");
+      config().blackboard->set("just_yielded", false);  // spin flag consumed
     }
 
     // Yield decision: close AND inside cone AND not cooling down.
@@ -124,6 +125,8 @@ public:
         suppressing_ = true;
         suppress_until_s_ = now + cooldown_s_;
         publish_event("ROBOT_SUPPRESS_START");
+        // Signal the tree: the yield timed out -> run the one-time TurnAndGo spin.
+        config().blackboard->set("just_yielded", true);
       }
     }
 

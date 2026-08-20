@@ -9,6 +9,10 @@
         "/^cd /home/oggie/Documents/GitHub/Leo_Sct/results/coverage_logs/run_2026-08-20_15-13-38 && echo \"=== files ===\" && ls -la && echo \"=== summary\\.csv ===\" && cat summary\\.csv && echo \"=== social_summary\\.csv ===\" && cat social_summary\\.csv && echo \"=== state header ===\" && head -1 social_state\\.csv && echo \"=== events types ===\" && awk -F, 'NR>1\\{print \\$4\\}' social_events\\.csv \\| sort \\| uniq -c \\| sort -rn$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^cd /home/oggie/Documents/GitHub/Leo_Sct/results/coverage_logs/run_2026-08-20_16-43-39 && echo \"=== summary ===\" && cat summary\\.csv && echo \"=== social_summary ===\" && cat social_summary\\.csv && echo \"=== BT/ROBOT events ===\" && grep -E \",BT,\\|ROBOT_NEAR\\|ROBOT_GONE\\|BUMP\\|OBSTACLE_NEAR\" social_events\\.csv \\| head -30 && echo \"=== event types ===\" && awk -F, 'NR>1\\{print \\$4\\}' social_events\\.csv \\| sort \\| uniq -c \\| sort -rn$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

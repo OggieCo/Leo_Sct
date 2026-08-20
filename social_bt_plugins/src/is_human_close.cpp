@@ -22,7 +22,7 @@
  *   * yield when a human is close AND inside the block cone
  *     (±block_angle_deg, default 20°),
  *   * keep yielding up to yield_max_s (default 4 s), then stop,
- *   * enter a cooldown (cooldown_s, default 4 s) before it can yield again.
+ *   * enter a cooldown (cooldown_s, default 8 s) before it can yield again.
  *
  * SIDE humans (outside the cone) do NOT trigger the hard yield — they are left
  * to the velocity_adaptor, which smoothly slows the robot instead.  Frontal
@@ -48,7 +48,7 @@ public:
     human_close_(false), human_angle_(0.0),
     yielding_(false), suppressing_(false),
     yield_started_s_(0.0), suppress_until_s_(0.0),
-    block_angle_deg_(20.0), yield_max_s_(4.0), cooldown_s_(4.0)
+    block_angle_deg_(20.0), yield_max_s_(4.0), cooldown_s_(8.0)
   {
     rclcpp::Node::SharedPtr node;
     if (config().blackboard->get("node", node) && node) {
@@ -107,6 +107,7 @@ public:
     if (suppressing_ && now >= suppress_until_s_) {
       suppressing_ = false;
       publish_event("HUMAN_SUPPRESS_END");
+      config().blackboard->set("just_yielded", false);  // spin flag consumed
     }
 
     const bool should_yield = in_block && !suppressing_;
@@ -123,6 +124,8 @@ public:
         suppressing_ = true;
         suppress_until_s_ = now + cooldown_s_;
         publish_event("HUMAN_SUPPRESS_START");
+        // Signal the tree: the yield timed out -> run the one-time TurnAndGo spin.
+        config().blackboard->set("just_yielded", true);
       }
     }
 

@@ -37,7 +37,7 @@ class RobotProximity(Node):
         super().__init__('robot_proximity')
         self.ns = self.get_namespace().strip('/') or 'root'
 
-        self.declare_parameter('close_distance', 1.5)
+        self.declare_parameter('close_distance', 2.0)
         self.declare_parameter('cone_half_deg', 30.0)
 
         self.other_robots = [n for n, _, _, _ in ROBOT_POSITIONS if n != self.ns]
