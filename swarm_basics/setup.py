@@ -12,14 +12,14 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', ['launch/spawn_multi_robots.launch.py']),
         ('share/' + package_name + '/launch', ['launch/leo_gz.launch.py']),
-        ('share/' + package_name + '/launch', ['launch/nav2_robot_0.launch.py']),
         ('share/' + package_name + '/config/nav2', ['config/nav2/robot_0_nav2.yaml']),
         ('share/' + package_name + '/config/nav2', ['config/nav2/corridor_map.yaml']),
         ('share/' + package_name + '/config/nav2', ['config/nav2/corridor_map.pgm']),
 
         #slam toolbox config/launch files
-        ('share/' + package_name + '/launch', ['launch/nav2_slam.launch.py']),
         ('share/' + package_name + '/launch', ['launch/nav2_slam_all.launch.py']),
+        #known-map mode (map_server + AMCL) for all robots
+        ('share/' + package_name + '/launch', ['launch/nav2_map_all.launch.py']),
         ('share/' + package_name + '/launch', ['launch/random_walk_all.launch.py']),
         ('share/' + package_name + '/launch', ['launch/random_goals_all.launch.py']),
         ('share/' + package_name + '/launch', ['launch/slam_toolbox.launch.py']),
@@ -37,7 +37,6 @@ setup(
         ('share/' + package_name + '/worlds', ['worlds/random_world.sdf']),
         ('share/' + package_name + '/worlds', ['worlds/human_world.sdf']),
         ('share/' + package_name + '/worlds', ['worlds/corridor_with_cube.sdf']),
-        ('share/' + package_name + '/worlds', ['worlds/random_world_humans.sdf']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -60,6 +59,9 @@ setup(
             'random_goals = swarm_basics.random_goals:main',
             'yolo_human_processor = swarm_basics.yolo_human_processor:main',
             'send_goal = swarm_basics.send_goal:main',
+            'velocity_adaptor = swarm_basics.velocity_adaptor:main',
+            'robot_proximity = swarm_basics.robot_proximity:main',
+            'social_event_logger = swarm_basics.social_event_logger:main',
         ],
     },
 )

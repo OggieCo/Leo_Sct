@@ -30,6 +30,8 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+from swarm_basics.robot_config import WORLD_NAME
+
 
 def launch_gz(context, *args, **kwargs):
     pkg_ros_gz_sim = get_package_share_directory("ros_gz_sim")
@@ -56,10 +58,7 @@ def generate_launch_description():
 
     sim_world = DeclareLaunchArgument(
         "sim_world",
-        #default_value=os.path.join(pkg_project_gazebo, "worlds", "random_world.sdf"),
-        #default_value=os.path.join(pkg_project_gazebo, "worlds", "human_world.sdf"),
-        #default_value=os.path.join(pkg_project_worlds, "worlds", "corridor.sdf"),
-        default_value=os.path.join(pkg_project_gazebo, "worlds", "random_world_humans.sdf"),
+        default_value=os.path.join(pkg_project_gazebo, "worlds", f"{WORLD_NAME}.sdf"),
         description="Path to the Gazebo world file",
     )
 

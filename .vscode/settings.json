@@ -1,6 +1,14 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:system",
     "chat.tools.terminal.autoApprove": {
-        "docker exec": true
+        "docker exec": true,
+        "/^echo \"=== current ROBOT_POSITIONS ===\"; grep -A5 \"ROBOT_POSITIONS\" swarm_basics/swarm_basics/robot_config\\.py; echo \"=== generated config displays ===\"; grep -E \"Name: \\(Robot\\|Map\\|Laser\\|Costmap\\|Grid\\|TF\\)\" swarm_basics/config/swarm_map_view\\.rviz; echo \"=== yaml valid\\? ===\"; python3 -c \"import yaml; d=yaml\\.safe_load\\(open\\('swarm_basics/config/swarm_map_view\\.rviz'\\)\\); print\\('YAML OK,', len\\(d\\['Visualization Manager'\\]\\['Displays'\\]\\), 'displays'\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd /home/oggie/Documents/GitHub/Leo_Sct/results/coverage_logs/run_2026-08-20_15-13-38 && echo \"=== files ===\" && ls -la && echo \"=== summary\\.csv ===\" && cat summary\\.csv && echo \"=== social_summary\\.csv ===\" && cat social_summary\\.csv && echo \"=== state header ===\" && head -1 social_state\\.csv && echo \"=== events types ===\" && awk -F, 'NR>1\\{print \\$4\\}' social_events\\.csv \\| sort \\| uniq -c \\| sort -rn$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }

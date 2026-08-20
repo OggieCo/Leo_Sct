@@ -5,7 +5,7 @@
     - PipelineSequence (Nav2 standard) for correct 1 Hz replanning.  A root
       SequenceStar was tried but it floods ComputePathToPose (RateController
       gating resets every re-tick) -> planner timeouts -> recovery chaos.
-    - IsHumanClose lives INSIDE the ReactiveFallback's first branch:
+    - IsHumanClose lives INSIDE the ReactiveFallback first branch:
       ReactiveFallback re-evaluates its first child EVERY tick, so IsHumanClose
       is ticked continuously WITHOUT disturbing the replan rate.
     - TimeOut(7 s) on the yield: if the human never moves, give up after 7 s
@@ -15,6 +15,14 @@
     * YIELD   - {human_close} true -> stop & wait (Wait 1 s, looped).
     * RESUME  - human gone -> FollowPath immediately.
     * TIMEOUT - human still there after 7 s -> continue toward the goal.
+
+  ROBOT-ROBOT LAYER (2026-08-17):
+    * IsRobotClose mirrors IsHumanClose but uses the proximity layer
+      (/ns/robot_close, /ns/robot_angle) and a wider 30 deg cone.
+    * NESTED fallbacks: each ReactiveFallback keeps at most TWO children
+      (one async yield + one async FollowPath).  A single fallback with
+      THREE async children stops re-ticking the yield branches while
+      FollowPath is active (observed in test run_2026-08-17_15-17-58).
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
@@ -28,12 +36,11 @@
           </RecoveryNode>
         </RateController>
 
-        <!-- SOCIAL FOLLOW: yield to humans, otherwise follow the path -->
+        <!-- SOCIAL FOLLOW: yield to humans, then robots, else follow path -->
         <RecoveryNode number_of_retries="1" name="SocialFollow">
           <ReactiveFallback name="HumanAwareFollow">
-            <!-- YIELD BRANCH: ticked EVERY tick (ReactiveFallback re-evaluates
-                 child 0).  IsHumanClose refreshes {human_close} on the
-                 blackboard; TimeOut gives up after 7 s if the human stays. -->
+            <!-- YIELD BRANCH (human): ticked EVERY tick.  IsHumanClose
+                 refreshes {human_close}; TimeOut gives up after 7 s. -->
             <Timeout msec="7000" name="YieldMax7s">
               <KeepRunningUntilFailure name="YieldToHuman">
                 <Sequence name="YieldCheck">
@@ -44,8 +51,21 @@
                 </Sequence>
               </KeepRunningUntilFailure>
             </Timeout>
-            <!-- NORMAL BRANCH: no human close (or human gone / 7 s up) -->
-            <FollowPath path="{path}" controller_id="FollowPath"/>
+            <!-- ROBOT-AWARE SUB-TREE: nested fallback so each ReactiveFallback
+                 has at most two async children (one yield + FollowPath) -->
+            <ReactiveFallback name="RobotAwareFollow">
+              <Timeout msec="7000" name="RobotYieldMax">
+                <KeepRunningUntilFailure name="YieldToRobot">
+                  <Sequence name="RobotYieldCheck">
+                    <IsRobotClose/>
+                    <BlackboardCheckBool value_A="{robot_close}" value_B="true" return_on_mismatch="FAILURE">
+                      <Wait wait_duration="1.0"/>
+                    </BlackboardCheckBool>
+                  </Sequence>
+                </KeepRunningUntilFailure>
+              </Timeout>
+              <FollowPath path="{path}" controller_id="FollowPath"/>
+            </ReactiveFallback>
           </ReactiveFallback>
           <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
         </RecoveryNode>

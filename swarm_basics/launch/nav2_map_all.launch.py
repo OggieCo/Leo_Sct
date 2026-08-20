@@ -1,11 +1,27 @@
-"""SLAM + Nav2 for ALL robots — reads nav2_generic.yaml, merges per-robot frames."""
+"""Known-map Nav2 for ALL robots — map_server + AMCL instead of SLAM.
+
+Same structure as nav2_slam_all.launch.py, but the map is NOT built live:
+each robot gets its own map_server (loading the SAME pre-made map into its
+/{ns}/map) and its own AMCL (localizing against it and publishing the
+/{ns}/map -> /{ns}/odom transform).
+
+Use this when you have a saved map of the world (e.g. corridor_map.yaml, or a
+map exported from a SLAM run with nav2_map_saver). For unknown environments use
+nav2_slam_all.launch.py instead.
+
+Run:
+    ros2 launch swarm_basics nav2_map_all.launch.py
+    # or with a specific map:
+    ros2 launch swarm_basics nav2_map_all.launch.py map:=/path/to/map.yaml
+"""
 
 import os
 import tempfile
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import OpaqueFunction, TimerAction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from swarm_basics.robot_config import ROBOT_POSITIONS
 
@@ -36,6 +52,7 @@ def per_robot_params(ns):
     p = load_common()
 
     # ---- Global costmap: per-robot map frame + per-robot map topic ----
+    # The static layer subscribes to /{ns}/map, which map_server publishes.
     gc = p['global_costmap']['global_costmap']['ros__parameters']
     gc['global_frame'] = mapf
     gc['robot_base_frame'] = bf
@@ -80,34 +97,40 @@ def write_costmap_params_file(ns, params):
     return path
 
 
-def create_slam_nodes(context, robots):
-    pkg = get_package_share_directory('swarm_basics')
-    slam_config = os.path.join(pkg, 'config', 'nav2', 'slam_toolbox.yaml')
-
+def create_map_nodes(context, robots, map_yaml):
     nodes = []
 
     for ns, _, _, _ in robots:
         params = per_robot_params(ns)
-        # Costmap sections must reach the embedded costmaps as a real YAML file
-        # (namespace root key), not via the dict. Flat server params stay in dict.
         costmap_file = write_costmap_params_file(ns, params)
         # Clean scan topic: {ns}/lidar/scan_clean is republished with frame {ns}/lidar_link
-        # (lidar_republish node fixes Gazebo's mangled frame)
         scan_topic = f'/{ns}/lidar/scan_clean'
-        # Controller -> velocity_adaptor -> robot driver (social speed slowing)
-        cmd_vel_topic = f'/{ns}/cmd_vel_social'
+        cmd_vel_topic = f'/{ns}/cmd_vel'
         odom_topic = f'/{ns}/odom'
-        laser_frame = f'{ns}/lidar_link'
 
-        # SLAM Toolbox — publishes {ns}/map→{ns}/odom, occupancy grid on /{ns}/map (per-robot)
+        # Map server — loads the pre-made map, publishes it on /{ns}/map (Transient Local)
         nodes.append(Node(
-            package='slam_toolbox', executable='async_slam_toolbox_node',
-            name=f'{ns}_slam_toolbox',
-            parameters=[slam_config, {
-                'map_frame': f'{ns}/map', 'odom_frame': f'{ns}/odom',
-                'base_frame': f'{ns}/base_footprint', 'laser_frame': laser_frame,
+            package='nav2_map_server', executable='map_server',
+            name='map_server', namespace=ns,
+            parameters=[{'use_sim_time': True, 'yaml_filename': map_yaml}],
+            output='screen',
+        ))
+
+        # AMCL — localizes against the static map, publishes /{ns}/map -> /{ns}/odom.
+        # robot_0's initial pose arrives on /initialpose (see set_initial_pose),
+        # everyone else's on /{ns}/initialpose (namespaced automatically).
+        nodes.append(Node(
+            package='nav2_amcl', executable='amcl',
+            name='amcl', namespace=ns,
+            parameters=[{
+                'use_sim_time': True,
+                'base_frame_id': f'{ns}/base_footprint',
+                'global_frame_id': f'{ns}/map',
+                'odom_frame_id': f'{ns}/odom',
+                'scan_topic': scan_topic,
+                'transform_tolerance': 0.5,
             }],
-            remappings=[('scan', scan_topic), ('map', f'/{ns}/map')],
+            remappings=[('initialpose', '/initialpose')] if ns == 'robot_0' else [],
             output='screen',
         ))
 
@@ -145,18 +168,12 @@ def create_slam_nodes(context, robots):
             output='screen',
         ))
 
-        # Lifecycle Manager — same namespace, uses bare node names.
-        # use_sim_time=False: the manager only orchestrates lifecycle
-        # transitions + bonds; running it on wall clock avoids the classic
-        # sim-time stall where change_state service timeouts freeze the whole
-        # bringup (seen as a 60s+ hang right after "Configuring planner_server"
-        # with a "change_state (timeout)" warning). The Nav2 servers below still
-        # use sim time for transforms.
-        # Delayed start + generous bond_timeout: lets SLAM publish {ns}/map→{ns}/odom
+        # Lifecycle Manager — manages map_server + amcl + Nav2 servers.
+        # use_sim_time=False: the manager only orchestrates lifecycle transitions
+        # + bonds; running it on wall clock avoids the classic sim-time stall.
+        # Delayed start + generous bond_timeout: lets AMCL publish {ns}/map->{ns}/odom
         # (and lidar_republish/odom_tf) come up FIRST, so embedded costmaps can
-        # resolve their initial transform and Nav2 activates cleanly. bond_timeout
-        # > 4s default so a slow-configured node doesn't cause the manager to give
-        # up mid-bring-up (which left a robot's bt_navigator inactive before).
+        # resolve their initial transform and Nav2 activates cleanly.
         nodes.append(TimerAction(
             period=12.0,
             actions=[Node(
@@ -165,15 +182,29 @@ def create_slam_nodes(context, robots):
                 parameters=[{'use_sim_time': False, 'autostart': True,
                              'bond_timeout': 20.0,
                              'attempt_respawn_reconnection': True,
-                             'node_names': ['planner_server', 'controller_server',
-                                            'behavior_server', 'bt_navigator']}],
+                             'node_names': ['map_server', 'amcl', 'planner_server',
+                                            'controller_server', 'behavior_server',
+                                            'bt_navigator']}],
                 output='screen',
             )],
         ))
 
+    # Set initial pose for ALL robots (single node; publishes /initialpose for
+    # robot_0 and /{ns}/initialpose for the rest — AMCL picks them up).
+    # Delayed until AMCL is active (it waits up to 10 s for a subscriber anyway).
+    nodes.append(TimerAction(
+        period=15.0,
+        actions=[Node(
+            package='swarm_basics', executable='set_initial_pose',
+            name='set_initial_pose',
+            parameters=[{'use_sim_time': True}],
+            output='screen',
+        )],
+    ))
+
     # Viz-only connector: align every robot's map frame to robot_0/map so RViz can
     # display all rovers in one view. Does NOT affect navigation — each robot still
-    # plans in its own {ns}/map frame.
+    # localizes in its own {ns}/map frame.
     origin = None
     for r in robots:
         if r[0] == 'robot_0':
@@ -197,7 +228,20 @@ def create_slam_nodes(context, robots):
 
 
 def generate_launch_description():
+    pkg = get_package_share_directory('swarm_basics')
+    default_map = os.path.join(pkg, 'config', 'nav2', 'corridor_map.yaml')
+    map_arg = DeclareLaunchArgument(
+        'map',
+        default_value=default_map,
+        description='Path to the pre-made map YAML (image + pgm next to it).',
+    )
     robot_list = [(ns, x, y, yaw) for ns, x, y, yaw in ROBOT_POSITIONS]
+
+    def build(ctx):
+        map_yaml = LaunchConfiguration('map').perform(ctx)
+        return create_map_nodes(ctx, robot_list, map_yaml)
+
     return LaunchDescription([
-        OpaqueFunction(function=lambda ctx: create_slam_nodes(ctx, robot_list)),
+        map_arg,
+        OpaqueFunction(function=build),
     ])

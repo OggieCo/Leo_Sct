@@ -35,7 +35,16 @@ def generate_launch_description():
             name="coverage_plotter",
             output="screen"
     )       
- 
+
+    # Social/behavior CSV logger — writes social_state.csv + social_events.csv
+    # into the same run folder as coverage_plotter.
+    social_logger_node = Node(
+            package="swarm_basics",
+            executable="social_event_logger",
+            name="social_event_logger",
+            output="screen"
+    )
+
     detector = LaunchConfiguration('detector')
 
     # --- Function to create all robot nodes ---
@@ -192,6 +201,24 @@ def generate_launch_description():
                 ],
             )
 
+            # Dynamic speed slowing near humans (scales controller cmd_vel)
+            velocity_adaptor_node = Node(
+                package="swarm_basics",
+                executable="velocity_adaptor",
+                name="velocity_adaptor",
+                namespace=ns,
+                output="screen",
+            )
+
+            # Robot-robot proximity perception (feeds IsRobotClose BT plugin)
+            robot_proximity_node = Node(
+                package="swarm_basics",
+                executable="robot_proximity",
+                name="robot_proximity",
+                namespace=ns,
+                output="screen",
+            )
+
             # Odom-to-TF bridge: publishes odom -> base_footprint transform
             odom_tf_node = Node(
                 package="swarm_basics",
@@ -228,13 +255,16 @@ def generate_launch_description():
                 output="screen",
             )
 
-            # All per-robot nodes: LiDAR + RealSense + bump + odom + lidar_republish + depth_to_scan + human detector
-            nodes += [state_pub, spawn_node, human_node, bump_node, odom_tf_node, lidar_republish_node, depth_to_scan]
+            # All per-robot nodes: LiDAR + RealSense + bump + odom + lidar_republish + depth_to_scan + human detector + velocity_adaptor + robot_proximity
+            nodes += [state_pub, spawn_node, human_node, bump_node, velocity_adaptor_node,
+                      robot_proximity_node,
+                      odom_tf_node, lidar_republish_node, depth_to_scan]
 
         return nodes
 
     return LaunchDescription([
         detector_arg,
         plot_node,
+        social_logger_node,
         OpaqueFunction(function=lambda context: create_all_robot_nodes(context, robots_to_spawn))
     ])

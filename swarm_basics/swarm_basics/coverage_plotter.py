@@ -40,10 +40,8 @@ class CoveragePlotter(Node):
         self.cumulative_path_length = defaultdict(float)
 
         # === CSV LOGGING ===
-        base_dir = Path('/root/ros2_ws/src/results/coverage_logs')
-        run_tag = time.strftime('run_%Y-%m-%d_%H-%M-%S')
-        self.csv_dir = base_dir / run_tag
-        self.csv_dir.mkdir(parents=True, exist_ok=True)
+        from swarm_basics.run_utils import get_run_dir
+        self.csv_dir = get_run_dir()
         self.ros_start_time = self.get_clock().now()  # ROS simulation time
 
         # trajectories.csv – high-frequency pose stream
