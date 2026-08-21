@@ -1,14 +1,25 @@
 // IsRobotClose — custom BT condition node for robot-robot social navigation.
 //
-// Subscribes to the robot's `robot_close` (Bool) and `robot_angle` (Float32)
-// topics, published by swarm_basics robot_proximity (namespaced, e.g.
-// /robot_0/robot_close, /robot_0/robot_angle).  On every tick it decides
-// whether THIS robot should yield to another robot:
+// Subscribes to the robot's `robot_close` (Bool), `robot_angle` (Float32),
+// `robot_dca` (Float32, predicted min approach distance) and `robot_faster`
+// (Bool) topics, published by swarm_basics robot_proximity (namespaced).  On
+// every tick it decides whether THIS robot should yield to another robot:
 //
-//   * yield when a robot is close AND its bearing is inside the block cone
-//     (±block_angle_deg, default 20°),
-//   * keep yielding up to yield_max_s (default 4 s), then stop,
-//   * enter a cooldown (cooldown_s, default 8 s) before it can yield again.
+//   YIELD RULE (right-hand traffic + speed priority):
+//     * head-on  (|angle| <= block_angle_deg)          -> yield (both robots)
+//     * side conflict (robot_close && robot_dca <= dca_margin):
+//         - yield if the other robot is FASTER than us (don't cut off a fast
+//           mover), or
+//         - yield if the other robot is on OUR RIGHT (we are "the one on the
+//           left" -> yield; right-hand traffic).
+//     * side-by-side safe pass (large DCA) -> NO yield.
+//
+//   Keeps yielding up to yield_max_s (default 6 s), then stops and enters a
+//   cooldown (cooldown_s, default 8 s) before it can yield again.
+//
+//   COMMIT-TO-YIELD: once yielding, it only releases after the conflict has
+//   been CONTINUOUSLY clear for release_debounce_s (default 1.5 s), avoiding
+//   the flicker/re-yield double-stop when the other robot is still crossing.
 //
 // Writes the decision into blackboard keys `robot_close` (bool, true while
 // yielding) and `robot_angle` (float) for the tree's BlackboardCheckBool.
@@ -44,10 +55,13 @@ class IsRobotClose : public BT::ConditionNode
 public:
   IsRobotClose(const std::string & name, const BT::NodeConfiguration & conf)
   : BT::ConditionNode(name, conf),
-    robot_close_(false), robot_angle_(0.0),
+    robot_close_(false), robot_angle_(0.0), robot_dca_(100.0),
+    robot_faster_(false),
     yielding_(false), suppressing_(false),
-    yield_started_s_(0.0), suppress_until_s_(0.0),
-    block_angle_deg_(20.0), yield_max_s_(4.0), cooldown_s_(8.0)
+    yield_started_s_(0.0), suppress_until_s_(0.0), clear_since_s_(0.0),
+    block_angle_deg_(20.0), side_cone_deg_(20.0), dca_margin_(0.6),
+    yield_max_s_(6.0), cooldown_s_(8.0), release_debounce_s_(1.5),
+    hold_cone_deg_(45.0)
   {
     rclcpp::Node::SharedPtr node;
     if (config().blackboard->get("node", node) && node) {
@@ -64,6 +78,16 @@ public:
         [this](const std_msgs::msg::Float32::SharedPtr msg) {
           robot_angle_ = msg->data;
         });
+      sub_dca_ = local_node_->create_subscription<std_msgs::msg::Float32>(
+        "robot_dca", rclcpp::QoS(10),
+        [this](const std_msgs::msg::Float32::SharedPtr msg) {
+          robot_dca_ = msg->data;
+        });
+      sub_faster_ = local_node_->create_subscription<std_msgs::msg::Bool>(
+        "robot_faster", rclcpp::QoS(10),
+        [this](const std_msgs::msg::Bool::SharedPtr msg) {
+          robot_faster_ = msg->data;
+        });
       event_pub_ = local_node_->create_publisher<std_msgs::msg::String>(
         "bt_social_event", 10);
       executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
@@ -72,9 +96,11 @@ public:
         [this]() { executor_->spin(); });
       RCLCPP_INFO(rclcpp::get_logger("IsRobotClose"),
                   "IsRobotClose: subscribed to %s/robot_close + robot_angle "
-                  "(block=%.0f deg, yield=%.0fs, cooldown=%.0fs)",
-                  node->get_namespace(), block_angle_deg_, yield_max_s_,
-                  cooldown_s_);
+                  "+ robot_dca + robot_faster "
+                  "(head-on=%.0f deg, side=%.0f deg, dca=%.2f m, "
+                  "yield=%.0fs, cooldown=%.0fs)",
+                  node->get_namespace(), block_angle_deg_, side_cone_deg_,
+                  dca_margin_, yield_max_s_, cooldown_s_);
     } else {
       RCLCPP_WARN(rclcpp::get_logger("IsRobotClose"),
                   "blackboard has no 'node' — cannot subscribe to robot_close");
@@ -99,8 +125,34 @@ public:
       now = node->now().seconds();
     }
 
-    const bool in_block =
-      robot_close_ && std::abs(robot_angle_) <= block_angle_deg_;
+    // YIELD TRIGGER (right-hand traffic + speed priority).  Starting a yield
+    // requires a GENUINE predicted collision (DCA <= margin): a robot passing
+    // far away (e.g. 1.9 m) is NOT a conflict even if its bearing is ~0 deg
+    // (it just crosses in front of the stopped robot).
+    //   head-on  (|angle| <= block AND DCA <= margin) -> yield (both robots)
+    //   side conflict (DCA <= margin):
+    //       * yield if the other robot is FASTER than us, or
+    //       * yield if the other robot is on OUR RIGHT (we are "the one on
+    //         the left" -> yield, right-hand traffic).
+    //   robot_angle sign: + = LEFT, - = RIGHT.
+    const bool head_on =
+      robot_close_ && robot_dca_ <= dca_margin_ &&
+      std::abs(robot_angle_) <= block_angle_deg_;
+    const bool side_conflict =
+      robot_close_ && robot_dca_ <= dca_margin_;
+    const bool on_our_right = robot_angle_ < -side_cone_deg_;
+    const bool trigger =
+      head_on || (side_conflict && (robot_faster_ || on_our_right));
+
+    // HOLD: while yielding, STAY stopped as long as the other robot is still
+    // close AND still ahead of us (or on our right) — even if the DCA
+    // momentarily looks large (e.g. both robots stopped head-on ~2 m apart;
+    // the DCA flickers with every tiny controller nudge and would otherwise
+    // cause a stop-go limit cycle).  Release only once it clearly passed
+    // (bearing beyond hold cone) or left close range.
+    const bool hold =
+      robot_close_ &&
+      (std::abs(robot_angle_) <= hold_cone_deg_ || on_our_right);
 
     // Cooldown: let the robot resume once the suppression window elapses.
     if (suppressing_ && now >= suppress_until_s_) {
@@ -109,30 +161,43 @@ public:
       config().blackboard->set("just_yielded", false);  // spin flag consumed
     }
 
-    // Yield decision: close AND inside cone AND not cooling down.
-    const bool should_yield = in_block && !suppressing_;
+    // Yield decision: trigger satisfied AND not cooling down.
+    const bool should_yield = trigger && !suppressing_;
 
     if (should_yield && !yielding_) {
       yielding_ = true;
       yield_started_s_ = now;
+      clear_since_s_ = 0.0;
       publish_event("ROBOT_YIELD_START");
     }
 
     if (yielding_) {
+      // COMMIT TO THE YIELD: hold while the other robot is still in the way
+      // (bearing/range based, see `hold` above).  Only release after it has
+      // been continuously clear for release_debounce_s_ — prevents both the
+      // double-stop and the stop-go limit cycle.
+      if (hold) {
+        clear_since_s_ = 0.0;                 // still blocked -> reset debounce
+      } else if (clear_since_s_ == 0.0) {
+        clear_since_s_ = now;                 // conflict gone -> start debounce
+      }
+
       // Give the other robot a fixed window, then stop + cool down.
       if (now - yield_started_s_ >= yield_max_s_) {
         yielding_ = false;
         suppressing_ = true;
         suppress_until_s_ = now + cooldown_s_;
+        clear_since_s_ = 0.0;
         publish_event("ROBOT_SUPPRESS_START");
-        // Signal the tree: the yield timed out -> run the one-time TurnAndGo spin.
+        // Signal the tree: the yield timed out -> run the one-time arc.
         config().blackboard->set("just_yielded", true);
+      } else if (clear_since_s_ > 0.0 &&
+                 now - clear_since_s_ >= release_debounce_s_) {
+        // Other robot truly gone -> resume without arc.
+        yielding_ = false;
+        clear_since_s_ = 0.0;
+        publish_event("ROBOT_YIELD_END");
       }
-    }
-
-    if (!should_yield && yielding_) {
-      yielding_ = false;
-      publish_event("ROBOT_YIELD_END");
     }
 
     // Feed the tree: robot_close true while we are actually yielding.
@@ -161,6 +226,8 @@ private:
 
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_close_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_angle_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_dca_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_faster_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr event_pub_;
   rclcpp::Node::SharedPtr local_node_;
   rclcpp::executors::SingleThreadedExecutor::SharedPtr executor_;
@@ -168,13 +235,20 @@ private:
 
   bool robot_close_;
   float robot_angle_;
+  float robot_dca_;
+  bool robot_faster_;
   bool yielding_;
   bool suppressing_;
   double yield_started_s_;
   double suppress_until_s_;
+  double clear_since_s_;
   double block_angle_deg_;
+  double side_cone_deg_;
+  double dca_margin_;
   double yield_max_s_;
   double cooldown_s_;
+  double release_debounce_s_;
+  double hold_cone_deg_;
 };
 
 }  // namespace social_bt

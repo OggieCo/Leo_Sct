@@ -11,6 +11,7 @@
 #include <thread>
 
 #include "is_robot_close.hpp"
+#include "arc.hpp"
 
 /**
  * IsHumanClose — custom BT condition node for social navigation.
@@ -182,4 +183,5 @@ BT_REGISTER_NODES(factory)
 {
   factory.registerNodeType<social_bt::IsHumanClose>("IsHumanClose");
   factory.registerNodeType<social_bt::IsRobotClose>("IsRobotClose");
+  factory.registerNodeType<social_bt::Arc>("Arc");
 }

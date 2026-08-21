@@ -156,6 +156,8 @@
       <static>true</static>
     </model>
 
+    <!-- HUMAN COMMENTED OUT (2026-08-21): pure robot-robot testing.
+         To re-enable the human, uncomment the actor block below.
     <actor name="human_waiting">
       <skin>
         <filename>/usr/share/gazebo-11/media/models/walk.dae</filename>
@@ -179,6 +181,7 @@
         </trajectory>
       </script>
     </actor>
+    -->
 
   </world>
 </sdf>

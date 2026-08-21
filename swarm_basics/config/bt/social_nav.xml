@@ -54,7 +54,7 @@
             <!-- ROBOT-AWARE SUB-TREE: nested fallback so each ReactiveFallback
                  has at most two async children (one yield + FollowPath) -->
             <ReactiveFallback name="RobotAwareFollow">
-              <Timeout msec="4000" name="RobotYieldMax">
+              <Timeout msec="6000" name="RobotYieldMax">
                 <KeepRunningUntilFailure name="YieldToRobot">
                   <Sequence name="RobotYieldCheck">
                     <IsRobotClose/>
@@ -64,17 +64,15 @@
                   </Sequence>
                 </KeepRunningUntilFailure>
               </Timeout>
-              <!-- TURN-AND-GO (2026-08-20): after a 4 s yield times out the
-                   rover rotates in place ONCE (Spin 90 deg left), then follows
-                   the replanned path.  {just_yielded} is set by the plugins
-                   only when a yield expires; normal navigation skips the spin. -->
-              <ReactiveFallback name="TurnOrFollow">
-                <Sequence name="TurnAndGo">
-                  <!-- memory Sequence -> Spin + DriveOnHeading run ONCE, then FollowPath -->
+              <!-- ARC MANEUVER after a 6 s yield: smooth constant-curvature arc
+                   (~1 m, 60 deg, turn while driving).  Both rovers arc
+                   LEFT; they face opposite ways so they DIVERGE.  No
+                   in-place spin -> works with adhesive wheels. -->
+              <ReactiveFallback name="ArcOrFollow">
+                <Sequence name="ArcThenGo">
                   <BlackboardCheckBool value_A="{just_yielded}" value_B="true" return_on_mismatch="FAILURE">
-                    <Sequence name="SpinThenDrive">
-                      <Spin spin_dist="0.52"/>
-                      <DriveOnHeading dist_to_travel="1.0" speed="0.4" time_allowance="6"/>
+                    <Sequence name="ArcOnce">
+                      <Arc arc_angle="1.05" radius="0.95" speed="0.3" time_allowance="6" direction="away"/>
                     </Sequence>
                   </BlackboardCheckBool>
                   <FollowPath path="{path}" controller_id="FollowPath"/>

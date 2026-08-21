@@ -37,7 +37,7 @@ STATIONARY_POS = (3.0, 0.0, 1.5708)  # directly in front of rovers; yaw +90° (t
 # HUMAN_STAND_S seconds, then walks across and loops.  Lets us test: rover
 # stops for the human; if the human moves before the rover's deadline, the
 # rover proceeds forward instead of detouring.  Kinematic -> camera-only.
-INCLUDE_WAITING_HUMAN = True
+INCLUDE_WAITING_HUMAN = False  # COMMENTED OUT for pure robot-robot tests; set True to regenerate with the human
 WAITING_HUMAN_POS = (3.0, 0.0)
 HUMAN_STAND_S = 30.0      # s standing still — long enough for the rover to reach it while standing
 WALK_SPEED = 0.6          # m/s once it starts walking

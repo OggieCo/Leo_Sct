@@ -13,6 +13,10 @@
         "/^cd /home/oggie/Documents/GitHub/Leo_Sct/results/coverage_logs/run_2026-08-20_16-43-39 && echo \"=== summary ===\" && cat summary\\.csv && echo \"=== social_summary ===\" && cat social_summary\\.csv && echo \"=== BT/ROBOT events ===\" && grep -E \",BT,\\|ROBOT_NEAR\\|ROBOT_GONE\\|BUMP\\|OBSTACLE_NEAR\" social_events\\.csv \\| head -30 && echo \"=== event types ===\" && awk -F, 'NR>1\\{print \\$4\\}' social_events\\.csv \\| sort \\| uniq -c \\| sort -rn$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^R=\\$\\(ls -dt /home/oggie/Documents/GitHub/Leo_Sct/results/coverage_logs/run_\\* \\| head -1\\); echo \"latest: \\$R\"; ls -la \"\\$R\" \\| head; echo; echo \"=== social_state: post-pass phase \\(cols: t, robot, x, y, human_det, human_close, hum_dist, hum_ang, robot_close, robot_ang, nearest_dist, cmd_lin, actual, speed_scale\\) ===\"; awk -F, 'NR==1 \\|\\| \\(\\(\\$3==\"robot_0\"\\|\\|\\$3==\"robot_1\"\\) && \\$2>30\\)' \"\\$R/social_state\\.csv\" \\| awk -F, '\\{print \\$2, \\$3, \\$4, \\$5, \\$7, \\$8, \\$9, \\$10, \\$11, \\$12, \\$13, \\$15, \\$17, \\$19\\}' \\| head -60$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

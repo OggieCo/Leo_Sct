@@ -9,6 +9,8 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 find_package(behaviortree_cpp_v3 REQUIRED)
 
 # ---- custom BT plugins (loaded by nav2 bt_navigator via plugin_lib_names) ----
@@ -23,6 +25,8 @@ target_compile_definitions(social_bt_plugins PRIVATE BT_PLUGIN_EXPORT)
 ament_target_dependencies(social_bt_plugins
   rclcpp
   std_msgs
+  nav_msgs
+  geometry_msgs
   behaviortree_cpp_v3
 )
 

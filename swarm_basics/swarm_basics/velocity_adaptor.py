@@ -46,6 +46,7 @@ class VelocityAdaptor(Node):
         # Robot-robot proximity (from robot_proximity, same namespace)
         self.declare_parameter('rd_stop', 1.0)        # m  -> scale 0 near another rover
         self.declare_parameter('rd_slow', 5.0)        # m  -> start slowing near another rover
+        self.declare_parameter('lat_margin', 0.7)     # m  lateral gap counts as a safe pass
 
         # Nav2 controller now publishes to cmd_vel_social (see nav2_slam_all)
         self._sub_cmd = self.create_subscription(Twist, 'cmd_vel_social', self.cmd_cb, 10)
@@ -71,6 +72,9 @@ class VelocityAdaptor(Node):
 
         self._robot_dist = float('inf')   # m, nearest other rover
         self._robot_angle = 0.0           # deg, bearing of that rover (+left)
+        self._last_rdist = float('inf')   # distance-rate tracking (closing/separating)
+        self._last_rdist_t = None
+        self._rdist_rate = 0.0            # m/s, + = separating, - = approaching
 
         self.get_logger().info(
             f'VelocityAdaptor [{self.ns}]: slowing near humans '
@@ -78,7 +82,8 @@ class VelocityAdaptor(Node):
             f'd_stop={self.get_parameter("d_stop").value:.1f} m, '
             f'rate_max={self.get_parameter("rate_max").value:.0f} deg/s) '
             f'+ robots (rd_slow={self.get_parameter("rd_slow").value:.1f} m, '
-            f'rd_stop={self.get_parameter("rd_stop").value:.1f} m)')
+            f'rd_stop={self.get_parameter("rd_stop").value:.1f} m, '
+            f'lat_margin={self.get_parameter("lat_margin").value:.2f} m)')
 
     # -- inputs ------------------------------------------------------------
     def det_cb(self, msg):
@@ -139,20 +144,55 @@ class VelocityAdaptor(Node):
         return max(0.0, min(1.0, d_term * a_term * r_term))
 
     def _robot_scale(self):
-        """0..1 speed factor from proximity of the nearest other rover."""
+        """0..1 speed factor from proximity of the nearest other rover.
+
+        Slows ONLY when the other rover is genuinely IN OUR WAY: it must be
+        (a) ahead of us (front cone, |angle| <= 60 deg), (b) still CLOSING
+        (distance decreasing), and (c) laterally close to our path
+        (lat < lat_margin).  A rover passing side-by-side with a bigger
+        lateral gap is NOT in our way -> no slowdown (they used to stall the
+        whole pass).
+        """
         d = self._robot_dist
         if not math.isfinite(d):
             return 1.0
-        rd_stop = self.get_parameter('rd_stop').value
-        rd_slow = self.get_parameter('rd_slow').value
-        # sqrt profile -> roughly constant deceleration (smooth gradient stop)
-        # instead of a linear ramp that brakes harder and harder near rd_stop.
-        t = min(max((d - rd_stop) / (rd_slow - rd_stop), 0.0), 1.0)
-        d_term = math.sqrt(t)
-        # angle: 1.0 dead ahead, 0.5 at +/-90 deg (crossing), never 0 from side
-        a = min(abs(self._robot_angle), 90.0)
-        a_term = 0.5 + 0.5 * math.cos(math.radians(a))
-        return d_term * a_term
+        # closing rate (m/s): + = separating, - = approaching
+        now = self.get_clock().now().nanoseconds / 1e9
+        if self._last_rdist_t is not None:
+            dt = now - self._last_rdist_t
+            if dt > 1e-3:
+                ddot = (d - self._last_rdist) / dt
+                self._rdist_rate = 0.5 * self._rdist_rate + 0.5 * ddot
+        self._last_rdist = d
+        self._last_rdist_t = now
+
+        # not in front (side / behind) -> no slowdown
+        if abs(self._robot_angle) > 60.0:
+            return 1.0
+        # already passing / separating -> full speed
+        if self._rdist_rate > 0.05:
+            return 1.0
+
+        # decompose the other rover's position relative to our heading into
+        # "in our way" (lon, ahead) and "off to the side" (lat).
+        a = math.radians(min(abs(self._robot_angle), 90.0))
+        lat = d * math.sin(a)          # m off to the side (0 = dead ahead)
+        lon = d * math.cos(a)          # m still ahead to close
+
+        lat_margin = self.get_parameter('lat_margin').value  # safe-pass gap (m)
+        # 1.0 = passes with a > lat_margin gap -> no slowdown
+        # 0.0 = dead ahead -> full slowdown
+        lat_term = min(max(lat / lat_margin, 0.0), 1.0)
+
+        lon_stop = self.get_parameter('rd_stop').value   # m ahead -> scale 0
+        lon_slow = self.get_parameter('rd_slow').value   # m ahead -> start slowing
+        t = min(max((lon - lon_stop) / (lon_slow - lon_stop), 0.0), 1.0)
+        lon_term = math.sqrt(t)        # sqrt -> smooth gradient deceleration
+
+        # Complementary combination: a safe lateral pass (lat_term -> 1) keeps
+        # FULL speed no matter how small lon is (the rover is beside us, NOT
+        # in our way).  Only when BOTH lat and lon are small do we slow down.
+        return 1.0 - (1.0 - lat_term) * (1.0 - lon_term)
 
     # -- output ------------------------------------------------------------
     def cmd_cb(self, msg):

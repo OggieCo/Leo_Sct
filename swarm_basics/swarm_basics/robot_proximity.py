@@ -37,7 +37,7 @@ class RobotProximity(Node):
         super().__init__('robot_proximity')
         self.ns = self.get_namespace().strip('/') or 'root'
 
-        self.declare_parameter('close_distance', 2.0)
+        self.declare_parameter('close_distance', 2.4)  # 2.0 -> 2.4 (20% further)
         self.declare_parameter('cone_half_deg', 30.0)
 
         self.other_robots = [n for n, _, _, _ in ROBOT_POSITIONS if n != self.ns]
@@ -45,7 +45,11 @@ class RobotProximity(Node):
         self._pub_close = self.create_publisher(Bool, 'robot_close', 10)
         self._pub_angle = self.create_publisher(Float32, 'robot_angle', 10)
         self._pub_dist = self.create_publisher(Float32, 'nearest_robot_dist', 10)
+        self._pub_dca = self.create_publisher(Float32, 'robot_dca', 10)
+        self._pub_faster = self.create_publisher(Bool, 'robot_faster', 10)
         self._pub_id = self.create_publisher(String, 'nearest_robot_id', 10)
+
+        self._hist = {}   # name -> list[(t_ns, x, y)] for velocity estimation
 
         self._sub = self.create_subscription(
             TFMessage, f'/world/{WORLD_NAME}/dynamic_pose/info',
@@ -95,13 +99,45 @@ class RobotProximity(Node):
 
         close = dist <= self.get_parameter('close_distance').value
 
+        # --- velocity estimation from pose history (~0.6 s window) ---------
+        now = self.get_clock().now().nanoseconds
+        vel = {}
+        for n, (x, y, _) in poses.items():
+            h = self._hist.setdefault(n, [])
+            h.append((now, x, y))
+            while len(h) > 2 and now - h[0][0] > 0.6e9:
+                h.pop(0)
+            if len(h) >= 2:
+                dt = (h[-1][0] - h[0][0]) / 1e9
+                if dt > 1e-3:
+                    vel[n] = ((h[-1][1] - h[0][1]) / dt,
+                              (h[-1][2] - h[0][2]) / dt)
+
+        # --- predicted closest approach (DCA) + speed comparison -----------
+        dca = dist
+        faster = False
+        if self.ns in vel and name in vel:
+            mx, my = vel[self.ns]
+            ox_, oy_ = vel[name]
+            vrx, vry = ox_ - mx, oy_ - my
+            v2 = vrx * vrx + vry * vry
+            rx, ry = poses[name][0] - my_x, poses[name][1] - my_y
+            if v2 > 1e-6 and rx * vrx + ry * vry < 0.0:   # closing
+                tca = -(rx * vrx + ry * vry) / v2
+                dca = math.hypot(rx + vrx * tca, ry + vry * tca)
+            faster = math.hypot(ox_, oy_) > math.hypot(mx, my) + 0.1
+
         bc = Bool(); bc.data = close
         ba = Float32(); ba.data = float(rel)
         bd = Float32(); bd.data = float(dist)
+        bdca = Float32(); bdca.data = float(dca)
+        bf = Bool(); bf.data = faster
         bi = String(); bi.data = name
         self._pub_close.publish(bc)
         self._pub_angle.publish(ba)
         self._pub_dist.publish(bd)
+        self._pub_dca.publish(bdca)
+        self._pub_faster.publish(bf)
         self._pub_id.publish(bi)
 
 
