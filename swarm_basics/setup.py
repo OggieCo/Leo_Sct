@@ -62,6 +62,7 @@ setup(
             'velocity_adaptor = swarm_basics.velocity_adaptor:main',
             'robot_proximity = swarm_basics.robot_proximity:main',
             'social_event_logger = swarm_basics.social_event_logger:main',
+            'llm_planner = swarm_basics.llm_planner:main',
         ],
     },
 )

@@ -208,10 +208,14 @@ class YoloHumanProcessor(Node):
                 now = time.time()
 
                 # SUPPRESS robot-as-human false positives: if a real robot is
-                # close and in roughly the same direction, the "person" is the
-                # rover's body (YOLO false positive).  Publish NO_HUMAN.
+                # in roughly the same direction, the "person" is the rover's
+                # body (YOLO false positive).  Publish NO_HUMAN.
+                # Range 6.0 m: robot_proximity tracks the true (world-pose)
+                # distance to the nearest robot, and the depth read stays
+                # ~1.5 m even for a rover several metres away — so a narrow
+                # 2.5 m gate let a facing rover through as a "human".
                 robot_suppress = (
-                    self.robot_dist_ < 2.5 and
+                    self.robot_dist_ < 6.0 and
                     abs(angle - self.robot_angle_) < 40.0)
                 if robot_suppress:
                     last_det = now  # do NOT hold a suppressed detection

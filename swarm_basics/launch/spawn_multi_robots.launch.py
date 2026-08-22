@@ -18,6 +18,12 @@ def generate_launch_description():
         'detector', default_value='depth',
         description='Human detector backend: depth or yolo')
 
+    # LLM: 'true' -> llm_planner runs (BT executes LLM decisions, reactive
+    # rules stay as fallback). 'false' -> pure reactive BT (no LLM topic).
+    enable_llm_arg = DeclareLaunchArgument(
+        'enable_llm', default_value='true',
+        description='Start the llm_planner decision layer (true/false)')
+
     leo_description = get_package_share_directory("leo_description")
 
     robots_to_spawn = []
@@ -46,11 +52,13 @@ def generate_launch_description():
     )
 
     detector = LaunchConfiguration('detector')
+    enable_llm = LaunchConfiguration('enable_llm')
 
     # --- Function to create all robot nodes ---
     def create_all_robot_nodes(context, robots):
         nodes = []
         det = context.perform_substitution(detector)   # 'depth' or 'yolo'
+        llm_on = context.perform_substitution(enable_llm).lower() in ('true', '1')
 
         # --- One bridge for all robots ---
         bridge_args = []
@@ -219,6 +227,19 @@ def generate_launch_description():
                 output="screen",
             )
 
+            # LLM high-level decision layer (feeds CheckLlmAction BT plugin).
+            # Skipped when enable_llm=false -> no /ns/llm_action published ->
+            # the BT's LLM path stays inactive and the reactive rules run.
+            if llm_on:
+                llm_planner_node = Node(
+                    package="swarm_basics",
+                    executable="llm_planner",
+                    name="llm_planner",
+                    namespace=ns,
+                    output="screen",
+                )
+                nodes.append(llm_planner_node)
+
             # Odom-to-TF bridge: publishes odom -> base_footprint transform
             odom_tf_node = Node(
                 package="swarm_basics",
@@ -255,7 +276,7 @@ def generate_launch_description():
                 output="screen",
             )
 
-            # All per-robot nodes: LiDAR + RealSense + bump + odom + lidar_republish + depth_to_scan + human detector + velocity_adaptor + robot_proximity
+            # All per-robot nodes: LiDAR + RealSense + bump + odom + lidar_republish + depth_to_scan + human detector + velocity_adaptor + robot_proximity (+ llm_planner if enabled)
             nodes += [state_pub, spawn_node, human_node, bump_node, velocity_adaptor_node,
                       robot_proximity_node,
                       odom_tf_node, lidar_republish_node, depth_to_scan]
@@ -264,6 +285,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         detector_arg,
+        enable_llm_arg,
         plot_node,
         social_logger_node,
         OpaqueFunction(function=lambda context: create_all_robot_nodes(context, robots_to_spawn))

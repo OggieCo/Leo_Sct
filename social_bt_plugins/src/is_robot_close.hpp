@@ -125,18 +125,18 @@ public:
       now = node->now().seconds();
     }
 
-    // YIELD TRIGGER (right-hand traffic + speed priority).  Starting a yield
-    // requires a GENUINE predicted collision (DCA <= margin): a robot passing
-    // far away (e.g. 1.9 m) is NOT a conflict even if its bearing is ~0 deg
-    // (it just crosses in front of the stopped robot).
-    //   head-on  (|angle| <= block AND DCA <= margin) -> yield (both robots)
-    //   side conflict (DCA <= margin):
-    //       * yield if the other robot is FASTER than us, or
-    //       * yield if the other robot is on OUR RIGHT (we are "the one on
-    //         the left" -> yield, right-hand traffic).
+    // YIELD TRIGGER (right-hand traffic + speed priority).
+    //   head-on  (|angle| <= block): a rover dead-ahead within close range is
+    //              ALWAYS a conflict -> yield regardless of DCA.  (The DCA
+    //              predictor is unreliable at slow/coasting speeds and would
+    //              report the raw distance > margin, letting a head-on
+    //              collision through — observed run_2026-08-22_17-43-36.)
+    //   side conflict (DCA <= margin): only a genuine predicted miss is a
+    //              conflict; then yield if the other robot is FASTER than us,
+    //              or if it is on OUR RIGHT (right-hand traffic).
     //   robot_angle sign: + = LEFT, - = RIGHT.
     const bool head_on =
-      robot_close_ && robot_dca_ <= dca_margin_ &&
+      robot_close_ &&
       std::abs(robot_angle_) <= block_angle_deg_;
     const bool side_conflict =
       robot_close_ && robot_dca_ <= dca_margin_;
@@ -181,14 +181,25 @@ public:
       }
 
       // Give the other robot a fixed window, then stop + cool down.
+      // The arc is ONLY the "still blocked after the window" fallback: if the
+      // other robot has already passed (bearing beyond the hold cone), resume
+      // straight instead — otherwise a very close pass that stays inside
+      // close-range the whole window would arc anyway (observed 18-09-02).
       if (now - yield_started_s_ >= yield_max_s_) {
-        yielding_ = false;
-        suppressing_ = true;
-        suppress_until_s_ = now + cooldown_s_;
-        clear_since_s_ = 0.0;
-        publish_event("ROBOT_SUPPRESS_START");
-        // Signal the tree: the yield timed out -> run the one-time arc.
-        config().blackboard->set("just_yielded", true);
+        if (hold) {
+          yielding_ = false;
+          suppressing_ = true;
+          suppress_until_s_ = now + cooldown_s_;
+          clear_since_s_ = 0.0;
+          publish_event("ROBOT_SUPPRESS_START");
+          // Signal the tree: the yield timed out -> run the one-time arc.
+          config().blackboard->set("just_yielded", true);
+        } else {
+          // Other robot already passed -> resume, no arc.
+          yielding_ = false;
+          clear_since_s_ = 0.0;
+          publish_event("ROBOT_YIELD_END");
+        }
       } else if (clear_since_s_ > 0.0 &&
                  now - clear_since_s_ >= release_debounce_s_) {
         // Other robot truly gone -> resume without arc.

@@ -80,6 +80,12 @@ def generate_launch_description():
         description="Human detector backend: depth (heuristics) or yolo (YOLOv8)",
     )
 
+    enable_llm_arg = DeclareLaunchArgument(
+        "enable_llm",
+        default_value="true",
+        description="Start the llm_planner decision layer (true/false)",
+    )
+
     # Setup to launch the simulator and Gazebo world
     gz_sim = OpaqueFunction(function=launch_gz)
 
@@ -90,6 +96,7 @@ def generate_launch_description():
         launch_arguments={
             "robot_ns": LaunchConfiguration("robot_ns"),
             "detector": LaunchConfiguration("detector"),
+            "enable_llm": LaunchConfiguration("enable_llm"),
         }.items(),
     )
 
@@ -114,6 +121,8 @@ def generate_launch_description():
             sim_world,
             robot_ns,
             headless_arg,
+            detector_arg,
+            enable_llm_arg,
             gz_sim,
             spawn_robot,
             topic_bridge,

@@ -68,10 +68,13 @@ class RandomGoalPublisher(Node):
         y = random.uniform(-3.0, 3.0)
         yaw = random.uniform(-math.pi, math.pi)
 
-        # Per-robot map frame (each rover has its own /{ns}/map tree)
+        # Per-robot map frame (each rover has its own {ns}/map tree).
+        # NO leading slash: Nav2's costmap global_frame is '{ns}/map' and
+        # transformPoseInTargetFrame does a string compare — '/robot_0/map'
+        # != 'robot_0/map' sent it down a TF lookup that fails.
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose = PoseStamped()
-        goal_msg.pose.header.frame_id = f'/{ns}/map'
+        goal_msg.pose.header.frame_id = f'{ns}/map'
         goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
         goal_msg.pose.pose.position.x = x
         goal_msg.pose.pose.position.y = y

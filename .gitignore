@@ -1,0 +1,13 @@
+# Secrets — never commit the API key
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Logs / results
+*.log
+nav2_log.txt

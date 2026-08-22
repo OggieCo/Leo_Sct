@@ -41,7 +41,7 @@ from swarm_basics.robot_config import WORLD_NAME
 BASE_DIR = '/root/ros2_ws/src/results/coverage_logs'
 STATE_HEADER = ('timestamp,elapsed_sec,robot_id,x,y,yaw,'
                 'human_detected,human_close,human_distance,human_angle,'
-                'robot_close,robot_angle,nearest_robot_dist,'
+                'robot_close,robot_angle,nearest_robot_dist,robot_dca,'
                 'obstacle_min,cmd_lin,cmd_ang,actual_speed_kph,backwards,speed_scale')
 EVENT_HEADER = 'timestamp,elapsed_sec,robot_id,event_type,details'
 OBSTACLE_NEAR_THRESHOLD = 0.5
@@ -76,7 +76,7 @@ class SocialEventLogger(Node):
                 'human_detected': False, 'human_close': False,
                 'human_distance': -1.0, 'human_angle': 0.0,
                 'robot_close': False, 'robot_angle': 0.0,
-                'nearest_robot_dist': float('inf'),
+                'nearest_robot_dist': float('inf'), 'robot_dca': 100.0,
                 'obstacle_min': float('inf'),
                 'cmd_lin': 0.0, 'cmd_ang': 0.0, 'actual_speed_kph': 0.0,
                 'backwards': False,
@@ -107,6 +107,8 @@ class SocialEventLogger(Node):
                                      lambda m, n=ns: self.set(n, 'robot_angle', float(m.data)), 10)
             self.create_subscription(Float32, f'/{ns}/nearest_robot_dist',
                                      lambda m, n=ns: self.set(n, 'nearest_robot_dist', float(m.data)), 10)
+            self.create_subscription(Float32, f'/{ns}/robot_dca',
+                                     lambda m, n=ns: self.set(n, 'robot_dca', float(m.data)), 10)
             self.create_subscription(LaserScan, f'/{ns}/lidar/scan',
                                      lambda m, n=ns: self.scan_cb(n, m), 10)
             self.create_subscription(Twist, f'/{ns}/cmd_vel',
@@ -220,6 +222,7 @@ class SocialEventLogger(Node):
                        f'{1 if s["robot_close"] else 0},'
                        f'{s["robot_angle"]:.1f},'
                        f'{fmt_dist(s["nearest_robot_dist"])},'
+                       f'{s["robot_dca"]:.2f},'
                        f'{fmt_dist(s["obstacle_min"])},'
                        f'{s["cmd_lin"]:.3f},{s["cmd_ang"]:.3f},'
                        f'{s["actual_speed_kph"]:.2f},'
