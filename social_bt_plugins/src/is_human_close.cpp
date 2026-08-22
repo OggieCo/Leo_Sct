@@ -20,14 +20,15 @@
  * topics (namespaced, e.g. /robot_0/human_close, /robot_0/human_angle) and
  * decides whether THIS robot should yield to a human:
  *
- *   * yield when a human is close AND inside the block cone
- *     (±block_angle_deg, default 20°),
+ *   * yield when a human is close, roughly in FRONT (±cone_deg, default 60°)
+ *     AND not clearly walking away (approaching or standing still),
  *   * keep yielding up to yield_max_s (default 4 s), then stop,
  *   * enter a cooldown (cooldown_s, default 8 s) before it can yield again.
  *
- * SIDE humans (outside the cone) do NOT trigger the hard yield — they are left
- * to the velocity_adaptor, which smoothly slows the robot instead.  Frontal
- * humans get the hard stop as a safety net.
+ * Humans moving away faster than away_rate (default 0.15 m/s), or beside /
+ * behind us, do NOT trigger the hard yield — the velocity_adaptor smoothly
+ * slows for them instead.  Humans approaching from the side get the hard
+ * stop as a safety net (they may cross our path).
  *
  * Writes the decision into blackboard `human_close` (true while actually
  * yielding) and `human_angle` for the tree's BlackboardCheckBool.  Publishes
@@ -46,10 +47,12 @@ class IsHumanClose : public BT::ConditionNode
 public:
   IsHumanClose(const std::string & name, const BT::NodeConfiguration & conf)
   : BT::ConditionNode(name, conf),
-    human_close_(false), human_angle_(0.0),
+    human_close_(false), human_angle_(0.0), human_dist_(100.0),
+    human_range_rate_(0.0), last_human_t_(-1.0),
     yielding_(false), suppressing_(false),
     yield_started_s_(0.0), suppress_until_s_(0.0),
-    block_angle_deg_(20.0), yield_max_s_(4.0), cooldown_s_(8.0)
+    cone_deg_(60.0), away_rate_(0.15),
+    yield_max_s_(4.0), cooldown_s_(8.0)
   {
     rclcpp::Node::SharedPtr node;
     if (config().blackboard->get("node", node) && node) {
@@ -66,6 +69,21 @@ public:
         [this](const std_msgs::msg::Float32::SharedPtr msg) {
           human_angle_ = msg->data;
         });
+      sub_dist_ = local_node_->create_subscription<std_msgs::msg::Float32>(
+        "human_distance", rclcpp::QoS(10),
+        [this](const std_msgs::msg::Float32::SharedPtr msg) {
+          // Range rate (m/s): - = approaching, + = moving away, ~0 = static.
+          const double now = local_node_->now().seconds();
+          if (last_human_t_ >= 0.0) {
+            const double dt = now - last_human_t_;
+            if (dt > 1e-3) {
+              const double rate = (msg->data - human_dist_) / dt;
+              human_range_rate_ = 0.3 * rate + 0.7 * human_range_rate_;
+            }
+          }
+          human_dist_ = msg->data;
+          last_human_t_ = now;
+        });
       event_pub_ = local_node_->create_publisher<std_msgs::msg::String>(
         "bt_social_event", 10);
       executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
@@ -74,9 +92,10 @@ public:
         [this]() { executor_->spin(); });
       RCLCPP_INFO(rclcpp::get_logger("IsHumanClose"),
                   "IsHumanClose: subscribed to %s/human_close + human_angle "
-                  "(block=%.0f deg, yield=%.0fs, cooldown=%.0fs)",
-                  node->get_namespace(), block_angle_deg_, yield_max_s_,
-                  cooldown_s_);
+                  "+ human_distance "
+                  "(cone=%.0f deg, away=%.2f m/s, yield=%.0fs, cooldown=%.0fs)",
+                  node->get_namespace(), cone_deg_, away_rate_,
+                  yield_max_s_, cooldown_s_);
     } else {
       RCLCPP_WARN(rclcpp::get_logger("IsHumanClose"),
                   "blackboard has no 'node' — cannot subscribe to human_close");
@@ -101,9 +120,13 @@ public:
       now = node->now().seconds();
     }
 
-    // Yield only for humans close AND inside the forward cone (safety net).
+    // Yield to a human who is close, roughly in FRONT (±cone_deg) AND not
+    // clearly walking away (approaching or standing still).  People beside /
+    // behind us, or moving away, do not cause a hard stop.
     const bool in_block =
-      human_close_ && std::abs(human_angle_) <= block_angle_deg_;
+      human_close_ &&
+      std::abs(human_angle_) <= cone_deg_ &&
+      human_range_rate_ < away_rate_;
 
     if (suppressing_ && now >= suppress_until_s_) {
       suppressing_ = false;
@@ -161,6 +184,7 @@ private:
 
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_close_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_angle_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_dist_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr event_pub_;
   rclcpp::Node::SharedPtr local_node_;
   rclcpp::executors::SingleThreadedExecutor::SharedPtr executor_;
@@ -168,11 +192,15 @@ private:
 
   bool human_close_;
   float human_angle_;
+  float human_dist_;
+  double human_range_rate_;
+  double last_human_t_;
   bool yielding_;
   bool suppressing_;
   double yield_started_s_;
   double suppress_until_s_;
-  double block_angle_deg_;
+  double cone_deg_;
+  double away_rate_;
   double yield_max_s_;
   double cooldown_s_;
 };

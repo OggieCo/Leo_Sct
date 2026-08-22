@@ -54,7 +54,7 @@
             <!-- ROBOT-AWARE SUB-TREE: nested fallback so each ReactiveFallback
                  has at most two async children (one yield + FollowPath) -->
             <ReactiveFallback name="RobotAwareFollow">
-              <Timeout msec="6000" name="RobotYieldMax">
+              <Timeout msec="10000" name="RobotYieldMax">
                 <KeepRunningUntilFailure name="YieldToRobot">
                   <Sequence name="RobotYieldCheck">
                     <IsRobotClose/>
@@ -93,7 +93,8 @@
             <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
             <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
           </Sequence>
-          <Spin spin_dist="1.57"/>
+          <!-- NO in-place Spin: real rovers have adhesive-taped wheels and
+               cannot rotate in place.  Recovery = clear + wait + backup only. -->
           <Wait wait_duration="5"/>
           <BackUp backup_dist="0.30" backup_speed="0.05"/>
         </RoundRobin>

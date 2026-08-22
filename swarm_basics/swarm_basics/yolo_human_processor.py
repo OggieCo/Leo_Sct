@@ -68,6 +68,14 @@ class YoloHumanProcessor(Node):
         self.create_subscription(
             Image, 'depth_camera/depth_image', self.depth_cb, 10)
 
+        # --- robot proximity (to suppress robot-as-human false positives) ---
+        self.robot_dist_ = float('inf')
+        self.robot_angle_ = 0.0
+        self.create_subscription(
+            Float32, 'nearest_robot_dist', self.rdist_cb, 10)
+        self.create_subscription(
+            Float32, 'robot_angle', self.rang_cb, 10)
+
         # --- load YOLO (downloads yolov8n.pt on first use) ---
         from ultralytics import YOLO
         self.get_logger().info(f'Loading YOLO model {self.model_path_} ...')
@@ -115,6 +123,12 @@ class YoloHumanProcessor(Node):
         with self.lock_:
             self.latest_color_ = img
             self.color_seq_ += 1
+
+    def rdist_cb(self, msg):
+        self.robot_dist_ = float(msg.data)
+
+    def rang_cb(self, msg):
+        self.robot_angle_ = float(msg.data)
 
     def depth_cb(self, msg):
         try:
@@ -192,11 +206,22 @@ class YoloHumanProcessor(Node):
                 angle = -(cx - img_w / 2.0) / fx * 180.0 / math.pi
                 close = 0.0 < dist < self.close_dist_
                 now = time.time()
-                last_det = now
-                last_dist = dist
-                last_angle = angle
-                last_close = close
-                self._publish(True, close, dist, angle, 'HUMAN')
+
+                # SUPPRESS robot-as-human false positives: if a real robot is
+                # close and in roughly the same direction, the "person" is the
+                # rover's body (YOLO false positive).  Publish NO_HUMAN.
+                robot_suppress = (
+                    self.robot_dist_ < 2.5 and
+                    abs(angle - self.robot_angle_) < 40.0)
+                if robot_suppress:
+                    last_det = now  # do NOT hold a suppressed detection
+                    self._publish(False, False, -1.0, 0.0, 'ROBOT_NOT_HUMAN')
+                else:
+                    last_det = now
+                    last_dist = dist
+                    last_angle = angle
+                    last_close = close
+                    self._publish(True, close, dist, angle, 'HUMAN')
             else:
                 now = time.time()
                 if last_det > 0 and (now - last_det) < self.hold_s_:

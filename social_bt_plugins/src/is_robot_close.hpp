@@ -60,7 +60,7 @@ public:
     yielding_(false), suppressing_(false),
     yield_started_s_(0.0), suppress_until_s_(0.0), clear_since_s_(0.0),
     block_angle_deg_(20.0), side_cone_deg_(20.0), dca_margin_(0.6),
-    yield_max_s_(6.0), cooldown_s_(8.0), release_debounce_s_(1.5),
+    yield_max_s_(10.0), cooldown_s_(8.0), release_debounce_s_(1.5),
     hold_cone_deg_(45.0)
   {
     rclcpp::Node::SharedPtr node;
@@ -144,12 +144,10 @@ public:
     const bool trigger =
       head_on || (side_conflict && (robot_faster_ || on_our_right));
 
-    // HOLD: while yielding, STAY stopped as long as the other robot is still
-    // close AND still ahead of us (or on our right) — even if the DCA
-    // momentarily looks large (e.g. both robots stopped head-on ~2 m apart;
-    // the DCA flickers with every tiny controller nudge and would otherwise
-    // cause a stop-go limit cycle).  Release only once it clearly passed
-    // (bearing beyond hold cone) or left close range.
+    // HOLD: stay stopped until the other robot has ACTUALLY passed — its
+    // bearing moved beyond the hold cone (it is beside/behind us) or it left
+    // close range.  Then continue straight with minimal deviation.  The arc
+    // is only the fallback when the yield times out without a pass.
     const bool hold =
       robot_close_ &&
       (std::abs(robot_angle_) <= hold_cone_deg_ || on_our_right);

@@ -155,9 +155,8 @@
       </link>
       <static>true</static>
     </model>
-
-    <!-- HUMAN COMMENTED OUT (2026-08-21): pure robot-robot testing.
-         To re-enable the human, uncomment the actor block below.
+    <!-- HUMAN placed at robot_1's old spot (-3,0): stands 8 s, then walks
+         EAST across robot_0's path (through the origin) and loops back. -->
     <actor name="human_waiting">
       <skin>
         <filename>/usr/share/gazebo-11/media/models/walk.dae</filename>
@@ -173,15 +172,15 @@
         <delay_start>1.0</delay_start>
         <auto_start>true</auto_start>
         <trajectory id="0" type="LINEAR">
-          <waypoint><time>0</time><pose>3.0 0.0 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>30.0</time><pose>3.0 0.0 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>40.0</time><pose>3.0 -3.0 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>50.0</time><pose>3.0 3.0 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>60.0</time><pose>3.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>0</time><pose>-3.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>8</time><pose>-3.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>20</time><pose>3.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>28</time><pose>3.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>40</time><pose>-3.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>48</time><pose>-3.0 0.0 1.0 0 0 0</pose></waypoint>
         </trajectory>
       </script>
     </actor>
-    -->
 
-  </world>
+</world>
 </sdf>
