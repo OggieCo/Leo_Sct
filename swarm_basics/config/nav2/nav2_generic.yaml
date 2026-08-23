@@ -9,7 +9,7 @@
     # ---- Planner ----
     planner_plugins: ["GridBased"]
     GridBased.plugin: "nav2_navfn_planner/NavfnPlanner"
-    GridBased.tolerance: 0.5
+    GridBased.tolerance: 2.0
     GridBased.use_astar: True
     GridBased.allow_unknown: True
 

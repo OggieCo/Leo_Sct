@@ -155,9 +155,10 @@
       </link>
       <static>true</static>
     </model>
-    <!-- HUMAN placed at (-3,0): stands 8 s, then walks EAST across the origin
-         (y=0) and back — crosses both rovers' path to (5,0).  RE-ENABLED
-         (2026-08-23 18:xx): full human+robots test. -->
+    <!-- HUMAN COMMENTED OUT (2026-08-23 19:xx): pure 135-deg robot-vs-robot
+         crossing test.  Uncomment to re-enable the walking human.
+         Path: (-2,0) <-> (+2,0), 0.25 m/s, 8 s stands. -->
+    <!--
     <actor name="human_waiting">
       <skin>
         <filename>/usr/share/gazebo-11/media/models/walk.dae</filename>
@@ -173,15 +174,16 @@
         <delay_start>1.0</delay_start>
         <auto_start>true</auto_start>
         <trajectory id="0" type="LINEAR">
-          <waypoint><time>0</time><pose>-3.0 0.0 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>8</time><pose>-3.0 0.0 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>20</time><pose>3.0 0.0 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>28</time><pose>3.0 0.0 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>40</time><pose>-3.0 0.0 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>48</time><pose>-3.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>0</time><pose>-2.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>8</time><pose>-2.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>24</time><pose>2.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>32</time><pose>2.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>48</time><pose>-2.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>56</time><pose>-2.0 0.0 1.0 0 0 0</pose></waypoint>
         </trajectory>
       </script>
     </actor>
+    -->
 
 </world>
 </sdf>

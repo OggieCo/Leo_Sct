@@ -17,7 +17,7 @@ import math
 import signal
 import time
 
-from swarm_basics.robot_config import ROBOT_POSITIONS
+from swarm_basics.robot_config import ROBOT_POSITIONS, world_to_map
 
 
 class RandomGoalPublisher(Node):
@@ -63,10 +63,14 @@ class RandomGoalPublisher(Node):
             self._schedule(5.0, lambda: self.send_goal(ns))
             return
 
-        # Random position in a 6x6m box around origin (within corridor world)
+        # Random position in a 6x6m box around origin — WORLD coordinates,
+        # then converted to this rover's own SLAM map frame (each rover's map
+        # is anchored at its own spawn pose), so all rovers explore the same
+        # world box.
         x = random.uniform(-3.0, 3.0)
         y = random.uniform(-3.0, 3.0)
         yaw = random.uniform(-math.pi, math.pi)
+        mx, my, myaw = world_to_map(ns, x, y, yaw)
 
         # Per-robot map frame (each rover has its own {ns}/map tree).
         # NO leading slash: Nav2's costmap global_frame is '{ns}/map' and
@@ -76,14 +80,16 @@ class RandomGoalPublisher(Node):
         goal_msg.pose = PoseStamped()
         goal_msg.pose.header.frame_id = f'{ns}/map'
         goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
-        goal_msg.pose.pose.position.x = x
-        goal_msg.pose.pose.position.y = y
+        goal_msg.pose.pose.position.x = mx
+        goal_msg.pose.pose.position.y = my
         goal_msg.pose.pose.position.z = 0.0
-        goal_msg.pose.pose.orientation.w = math.cos(yaw / 2.0)
-        goal_msg.pose.pose.orientation.z = math.sin(yaw / 2.0)
+        goal_msg.pose.pose.orientation.w = math.cos(myaw / 2.0)
+        goal_msg.pose.pose.orientation.z = math.sin(myaw / 2.0)
 
         robot['busy'] = True
-        self.get_logger().info(f'[{ns}] Sending goal: ({x:.1f}, {y:.1f})')
+        self.get_logger().info(
+            f'[{ns}] Sending goal: world ({x:.1f}, {y:.1f}) -> '
+            f'map ({mx:.1f}, {my:.1f})')
         future = ac.send_goal_async(goal_msg)
         future.add_done_callback(lambda f, ns=ns: self._goal_response_cb(f, ns))
 
