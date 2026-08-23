@@ -5,7 +5,8 @@ import tempfile
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import OpaqueFunction, TimerAction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from swarm_basics.robot_config import ROBOT_POSITIONS
 
@@ -80,14 +81,18 @@ def write_costmap_params_file(ns, params):
     return path
 
 
-def create_slam_nodes(context, robots):
+def create_slam_nodes(context, robots, bt='reactive'):
     pkg = get_package_share_directory('swarm_basics')
     slam_config = os.path.join(pkg, 'config', 'nav2', 'slam_toolbox.yaml')
+    bt_name = 'social_nav.xml' if bt != 'ai' else 'ai_nav.xml'
+    bt_xml = f'/root/ros2_ws/src/swarm_basics/config/bt/{bt_name}'
 
     nodes = []
 
     for ns, _, _, _ in robots:
         params = per_robot_params(ns)
+        # Which behavior tree: reactive (social_nav.xml) or AI (ai_nav.xml)
+        params['default_nav_to_pose_bt_xml'] = bt_xml
         # Costmap sections must reach the embedded costmaps as a real YAML file
         # (namespace root key), not via the dict. Flat server params stay in dict.
         costmap_file = write_costmap_params_file(ns, params)
@@ -197,7 +202,13 @@ def create_slam_nodes(context, robots):
 
 
 def generate_launch_description():
+    bt_arg = DeclareLaunchArgument(
+        'bt', default_value='reactive',
+        description='Behavior tree: reactive (social_nav.xml) or ai (ai_nav.xml)')
+    bt = LaunchConfiguration('bt')
     robot_list = [(ns, x, y, yaw) for ns, x, y, yaw in ROBOT_POSITIONS]
     return LaunchDescription([
-        OpaqueFunction(function=lambda ctx: create_slam_nodes(ctx, robot_list)),
+        bt_arg,
+        OpaqueFunction(function=lambda ctx: create_slam_nodes(
+            ctx, robot_list, ctx.perform_substitution(bt))),
     ])

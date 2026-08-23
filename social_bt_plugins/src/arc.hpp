@@ -22,6 +22,7 @@
 #include <behaviortree_cpp_v3/bt_factory.h>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <std_msgs/msg/float32.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <cmath>
@@ -39,7 +40,7 @@ public:
   : BT::ActionNodeBase(name, conf),
     started_(false), initial_yaw_(0.0), odom_yaw_(0.0), odom_ok_(false),
     start_time_s_(0.0), linear_(0.0), angular_(0.0), arc_angle_(0.0),
-    time_allowance_s_(6.0)
+    time_allowance_s_(6.0), robot_dist_(100.0)
   {
     rclcpp::Node::SharedPtr node;
     if (config().blackboard->get("node", node) && node) {
@@ -51,6 +52,12 @@ public:
           odom_yaw_ = 2.0 * std::atan2(
             msg->pose.pose.orientation.z, msg->pose.pose.orientation.w);
           odom_ok_ = true;
+        });
+      // distance to the nearest other rover (for the adaptive arc sizing)
+      sub_rdist_ = local_node_->create_subscription<std_msgs::msg::Float32>(
+        "nearest_robot_dist", rclcpp::QoS(10),
+        [this](const std_msgs::msg::Float32::SharedPtr msg) {
+          robot_dist_ = msg->data;
         });
       pub_cmd_ = local_node_->create_publisher<geometry_msgs::msg::Twist>(
         "cmd_vel", 10);
@@ -100,11 +107,58 @@ public:
     if (!started_) {
       double arc_angle = 1.05, speed = 0.3, radius = 0.95, time_allowance = 6.0;
       std::string direction = "left";
+      bool adaptive = false;
+      double robot_radius = 0.25, clearance = 0.35;
+      double min_arc = 0.35, max_arc = 1.0, min_r = 0.6, max_r = 1.4;
       getInput("arc_angle", arc_angle);
       getInput("speed", speed);
       getInput("radius", radius);
       getInput("time_allowance", time_allowance);
       getInput("direction", direction);
+      getInput("adaptive", adaptive);
+      getInput("robot_radius", robot_radius);
+      getInput("clearance", clearance);
+      getInput("min_arc_angle", min_arc);
+      getInput("max_arc_angle", max_arc);
+      getInput("min_radius", min_r);
+      getInput("max_radius", max_r);
+
+      if (adaptive) {
+        // Adaptive arc: size the maneuver to the other rover — its DISTANCE
+        // (nearest_robot_dist), BEARING (blackboard robot_angle, deg) and SIZE
+        // (robot_radius + clearance).  The arc must GUARANTEE a lateral
+        // displacement so the combined pass clears both footprints; the
+        // bearing only modulates it (dead-ahead = full, off to the side =
+        // small corrective nudge) instead of cancelling it.  Observed
+        // run_2026-08-23_18-12-38: a 20 deg arc at 2 m produced ~0.06 m
+        // lateral shift -> rovers ended 1.1 m apart face-to-face, froze, and
+        // re-arc'd.
+        double robot_angle = 0.0;
+        config().blackboard->get("robot_angle", robot_angle);
+        double dist = robot_dist_;
+        if (!std::isfinite(dist) || dist <= 0.0) {
+          dist = 2.0;  // unknown -> middle of the trigger range
+        }
+        // 1.0 when dead ahead, down to 0.3 when >= 90 deg off (already passing).
+        const double headon =
+          std::max(0.3, 1.0 - std::fabs(robot_angle) / 90.0);
+        // lateral displacement this rover must produce (both rovers arc ->
+        // combined separation = 2 * need).
+        double need = (robot_radius + clearance) * headon;
+        const double urg =
+          std::max(0.0, std::min(1.0, (2.4 - dist) / 1.4));  // 1 = very close
+        need *= 0.6 + 0.4 * urg;
+        radius = std::max(min_r, std::min(max_r, dist * 0.5));
+        double t = 1.0 - need / radius;
+        t = std::max(-1.0, std::min(1.0, t));
+        arc_angle = std::acos(t);
+        arc_angle = std::max(min_arc, std::min(max_arc, arc_angle));
+        RCLCPP_INFO(rclcpp::get_logger("Arc"),
+                    "adaptive arc: dist=%.2f m bearing=%.0f deg headon=%.2f -> "
+                    "radius=%.2f m angle=%.2f rad (lateral %.2f m/rover)",
+                    dist, robot_angle, headon, radius, arc_angle, need);
+      }
+
       arc_angle_ = std::fabs(arc_angle);
       time_allowance_s_ = time_allowance;
       linear_ = speed;
@@ -175,6 +229,14 @@ public:
       BT::InputPort<double>("time_allowance", 6.0, "max seconds"),
       BT::InputPort<std::string>(
         "direction", "left", "left | right | away (turn away from detected rover)"),
+      BT::InputPort<bool>("adaptive", false,
+        "size the arc to the other rover (distance/bearing/size)"),
+      BT::InputPort<double>("robot_radius", 0.25, "other rover half-width (m)"),
+      BT::InputPort<double>("clearance", 0.35, "lateral gap to keep (m)"),
+      BT::InputPort<double>("min_arc_angle", 0.35, "min turn angle (rad)"),
+      BT::InputPort<double>("max_arc_angle", 1.0, "max turn angle (rad)"),
+      BT::InputPort<double>("min_radius", 0.6, "min arc radius (m)"),
+      BT::InputPort<double>("max_radius", 1.4, "max arc radius (m)"),
     };
   }
 
@@ -189,6 +251,7 @@ private:
 
   rclcpp::Node::SharedPtr local_node_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_rdist_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_;
   rclcpp::executors::SingleThreadedExecutor::SharedPtr executor_;
   std::shared_ptr<std::thread> spin_thread_;
@@ -202,6 +265,7 @@ private:
   double angular_;
   double arc_angle_;
   double time_allowance_s_;
+  float robot_dist_;                 // nearest_robot_dist, m (adaptive sizing)
 };
 
 }  // namespace social_bt

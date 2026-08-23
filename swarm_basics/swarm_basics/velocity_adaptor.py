@@ -5,8 +5,10 @@ Sits between Nav2's controller output and the robot driver:
 
     controller_server --cmd_vel_social--> velocity_adaptor --cmd_vel--> driver
 
-It scales the commanded linear velocity by a factor 0..1, combining two
-independent terms:
+It scales the commanded LINEAR velocity by a factor 0..1 AND scales the
+angular velocity by the same factor (so the rover decelerates smoothly and
+never pirouettes in place near people/robots), combining two independent
+terms:
 
   * HUMAN term (YOLO human detection):
       - distance term — the closer the human, the slower (ramp d_slow..d_stop).
@@ -60,6 +62,9 @@ class VelocityAdaptor(Node):
         self._sub_odom = self.create_subscription(Odometry, 'odom', self.odom_cb, 10)
         self._sub_rdist = self.create_subscription(Float32, 'nearest_robot_dist', self.rdist_cb, 10)
         self._sub_rang = self.create_subscription(Float32, 'robot_angle', self.rang_cb, 10)
+        # LLM soft speed cap (llm_planner): 0..1, 1 = no limit from the AI
+        self._llm_scale = 1.0
+        self._sub_llm = self.create_subscription(Float32, 'llm_speed_scale', self.llm_cb, 10)
 
         self._detected = False
         self._close = False
@@ -105,6 +110,9 @@ class VelocityAdaptor(Node):
 
     def rang_cb(self, msg):
         self._robot_angle = float(msg.data)
+
+    def llm_cb(self, msg):
+        self._llm_scale = max(0.0, min(1.0, float(msg.data)))
 
     def ang_cb(self, msg):
         now = self.get_clock().now().nanoseconds / 1e9
@@ -196,11 +204,17 @@ class VelocityAdaptor(Node):
 
     # -- output ------------------------------------------------------------
     def cmd_cb(self, msg):
-        s = self._scale() * self._robot_scale()
+        s = self._scale() * self._robot_scale() * self._llm_scale
         out = Twist()
         out.linear.x = msg.linear.x * s
         out.linear.y = msg.linear.y * s
-        out.angular.z = msg.angular.z  # keep turning authority
+        # Scale angular too: near another robot/human the rover must NOT
+        # pirouette in place (adhesive wheels).  When the controller wants to
+        # rotate while linear is suppressed (s -> 0), we drop the yaw rate as
+        # well — no in-place spin.  When clear (s=1) turning is unaffected.
+        # (Observed run_2026-08-23_17-56-11: post-arc re-orientation spun the
+        #  rovers in place at cmd_lin=0 / cmd_ang=-1 for ~8 s.)
+        out.angular.z = msg.angular.z * s
         self._pub_cmd.publish(out)
         fs = Float32()
         fs.data = float(s)

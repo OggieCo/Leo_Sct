@@ -5,8 +5,9 @@ Subscribes to the perception topics (robot proximity + human detection) and
 calls OpenAI (gpt-4o-mini) ONLY when the situation materially changes and
 something actually needs deciding (event-driven).  Publishes:
 
-  llm_action   (std_msgs/String)  yield | proceed | arc | stop
-  llm_reason   (std_msgs/String)  one-line natural-language justification
+  llm_action      (std_msgs/String)  proceed | yield | slow | arc_left | arc_right | stop
+  llm_reason      (std_msgs/String)  one-line natural-language justification
+  llm_speed_scale (std_msgs/Float32) 0..1 soft speed cap for the 'slow' action
 
 Cost guards:
   * event-driven (only on a changed situation signature),
@@ -22,6 +23,7 @@ or the repo .env (gitignored).
 """
 
 import csv
+import fcntl
 import json
 import math
 import os
@@ -34,6 +36,7 @@ import urllib.request
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float32, String
 
 from swarm_basics.run_utils import get_run_dir
@@ -42,15 +45,19 @@ MODEL = "gpt-4o-mini"
 PRICE_IN = 0.15 / 1e6      # USD per input token (gpt-4o-mini)
 PRICE_OUT = 0.60 / 1e6     # USD per output token
 
-ACTIONS = ("proceed", "yield", "arc", "stop")
+ACTIONS = ("proceed", "yield", "slow", "arc_left", "arc_right", "stop")
 
 SYSTEM_PROMPT = """You are the social decision layer of a mobile robot navigating around other robots and humans. Choose exactly ONE action:
-- "proceed": continue along the current path (the default when there is no conflict).
-- "yield": stop and let the other pass. Yield when: (a) head-on with another robot, (b) the other robot is on YOUR RIGHT (right-hand traffic) and not clearly slower, (c) the other robot is FASTER than you, (d) a human is close and ahead of you or crossing your path.
-- "arc": after having yielded long enough and the other is STILL blocking, drive a smooth curved detour around them. NEVER an in-place spin.
+- "proceed": continue at full speed along the current path (default when there is no conflict).
+- "slow": keep driving but at reduced speed — use when someone is approaching but does NOT block you yet (anticipatory caution). The target speed is set separately (llm_speed_scale).
+- "yield": stop and let the other pass. Yield when: (a) a robot is CROSSING your path from the side, (b) the other robot is on YOUR RIGHT (right-hand traffic) and not clearly slower, (c) the other robot is FASTER than you, (d) a human is CLOSE (within 1.5 m) and ahead of you or crossing your path.  NOTE: for a head-on (robot dead ahead) do NOT yield — use "arc_left"/"arc_right" to pass.
+- "arc_left" / "arc_right": the head-on passing maneuver — drive a smooth curved detour to that side and continue toward the goal. Use it directly when another robot is dead ahead (head-on), and as a fallback after having yielded long enough and the other is STILL blocking. NEVER an in-place spin.
 - "stop": emergency stop (e.g., collision imminent).
 Rules: humans always have priority; prefer to wait for the other to pass and then continue straight (minimal deviation); never suggest in-place rotations.
-Respond with a single JSON object, no markdown, no extra text: {"action": "yield|proceed|arc|stop", "reason": "short reason"}"""
+On a head-on (robot dead ahead): NEVER stop and wait — pick "arc_left" or "arc_right" immediately so both of you curve past each other and continue toward the goal. NEVER pick "proceed" when head-on and DCA < 1.0 m (imminent collision).  "yield" is only for side/crossing conflicts or humans.
+A robot BESIDE or BEHIND you (bearing magnitude > 60 deg) has ALREADY passed — NEVER yield to it; choose "proceed".
+Use the motion/free-space hints: if a human is approaching (range rate negative) but still >1.5 m away, "slow" is often better than a full stop. A human reported "not close (>1.5 m)" is NOT a hard conflict — prefer "proceed" or "slow", not "yield".
+Respond with a single JSON object, no markdown, no extra text: {"action": "proceed|yield|slow|arc_left|arc_right|stop", "reason": "short reason"}"""
 
 
 def load_api_key():
@@ -92,9 +99,16 @@ class LlmPlanner(Node):
         self._robot_dist = float("inf")
         self._robot_id = ""
         self._human_det = False
+        self._human_close = False
         self._human_dist = -1.0
         self._human_angle = 0.0
         self._own_speed = 0.0
+        self._other_speed = 0.0
+        self._human_hist = []       # [(t, dist)] for range-rate
+        self._human_ang_hist = []   # [(t, angle)] for crossing estimate
+        self._free_front = float("inf")
+        self._free_left = float("inf")
+        self._free_right = float("inf")
 
         # --- decision state ---
         self._last_signature = None
@@ -114,12 +128,18 @@ class LlmPlanner(Node):
         self._tokens_out = 0
         self._cost = 0.0
         self._summary_written = False
-        self._usage_file = open(self._usage_path, "w", newline="")
+        # Append-mode + lock: BOTH robots share this usage file.  Opening with
+        # "w" let the second llm_planner TRUNCATE the first's rows, and
+        # concurrent flush() interleaved lines (corrupted llm_usage.csv).
+        self._usage_file = open(self._usage_path, "a", newline="")
         self._usage_writer = csv.writer(self._usage_file)
-        self._usage_writer.writerow([
-            "timestamp", "elapsed_sec", "robot_id", "action", "reason",
-            "in_tokens", "out_tokens", "total_tokens", "cost_usd"])
+        fcntl.flock(self._usage_file, fcntl.LOCK_EX)
+        if os.path.getsize(self._usage_path) == 0:
+            self._usage_writer.writerow([
+                "timestamp", "elapsed_sec", "robot_id", "action", "reason",
+                "in_tokens", "out_tokens", "total_tokens", "cost_usd"])
         self._usage_file.flush()
+        fcntl.flock(self._usage_file, fcntl.LOCK_UN)
 
         # --- subscriptions ---
         self.create_subscription(Bool, "robot_close", self._cb_robot_close, 10)
@@ -129,13 +149,17 @@ class LlmPlanner(Node):
         self.create_subscription(Float32, "nearest_robot_dist", self._cb_robot_dist, 10)
         self.create_subscription(String, "nearest_robot_id", self._cb_robot_id, 10)
         self.create_subscription(Bool, "human_detected", self._cb_human_det, 10)
+        self.create_subscription(Bool, "human_close", self._cb_human_close, 10)
         self.create_subscription(Float32, "human_distance", self._cb_human_dist, 10)
         self.create_subscription(Float32, "human_angle", self._cb_human_angle, 10)
+        self.create_subscription(Float32, "other_speed", self._cb_other_speed, 10)
+        self.create_subscription(LaserScan, "lidar/scan_clean", self._cb_scan, 10)
         self.create_subscription(Odometry, "odom", self._cb_odom, 10)
 
         # --- publishers ---
         self._pub_action = self.create_publisher(String, "llm_action", 10)
         self._pub_reason = self.create_publisher(String, "llm_reason", 10)
+        self._pub_speed_scale = self.create_publisher(Float32, "llm_speed_scale", 10)
 
         # --- event-driven ticker ---
         self.create_timer(1.0 / self.get_parameter("tick_hz").value, self._tick)
@@ -153,18 +177,68 @@ class LlmPlanner(Node):
     def _cb_robot_dist(self, m): self._robot_dist = float(m.data)
     def _cb_robot_id(self, m): self._robot_id = m.data
     def _cb_human_det(self, m): self._human_det = bool(m.data)
-    def _cb_human_dist(self, m): self._human_dist = float(m.data)
-    def _cb_human_angle(self, m): self._human_angle = float(m.data)
+    def _cb_human_close(self, m): self._human_close = bool(m.data)
+    def _cb_human_dist(self, m):
+        self._human_dist = float(m.data)
+        now = time.time()
+        self._human_hist.append((now, self._human_dist))
+        while self._human_hist and now - self._human_hist[0][0] > 1.5:
+            self._human_hist.pop(0)
+    def _cb_human_angle(self, m):
+        self._human_angle = float(m.data)
+        now = time.time()
+        self._human_ang_hist.append((now, self._human_angle))
+        while self._human_ang_hist and now - self._human_ang_hist[0][0] > 1.5:
+            self._human_ang_hist.pop(0)
+    def _cb_other_speed(self, m): self._other_speed = float(m.data)
+    def _cb_scan(self, m):
+        """Sector free-space (min range in front / left / right) for the LLM."""
+        front = left = right = float("inf")
+        amin = m.angle_min
+        inc = m.angle_increment
+        for i, r in enumerate(m.ranges):
+            if not math.isfinite(r) or r <= 0.0:
+                continue
+            deg = math.degrees(amin + i * inc)
+            if -30.0 <= deg <= 30.0:
+                front = min(front, r)
+            elif 30.0 < deg <= 90.0:
+                left = min(left, r)
+            elif -90.0 <= deg < -30.0:
+                right = min(right, r)
+        self._free_front, self._free_left, self._free_right = front, left, right
     def _cb_odom(self, m): self._own_speed = m.twist.twist.linear.x
+
+    def _human_motion(self):
+        """Return (range_rate m/s, label). range_rate < 0 = approaching."""
+        h = self._human_hist
+        rate = 0.0
+        if len(h) >= 2 and h[-1][0] - h[0][0] > 0.2:
+            rate = (h[-1][1] - h[0][1]) / (h[-1][0] - h[0][0])
+        ang_rate = 0.0
+        a = self._human_ang_hist
+        if len(a) >= 2 and a[-1][0] - a[0][0] > 0.2:
+            ang_rate = (a[-1][1] - a[0][1]) / (a[-1][0] - a[0][0])
+        if rate < -0.1:
+            label = "approaching me"
+        elif abs(ang_rate) > 20.0:      # deg/s, bearing sweeping -> crossing
+            label = "crossing my path"
+        elif rate > 0.1:
+            label = "moving away"
+        else:
+            label = "standing still"
+        return rate, label
 
     # --- event-driven tick -------------------------------------------------
     def _signature(self):
+        rr, _ = self._human_motion()
         return (
             round(self._robot_dist, 1), round(self._robot_angle, 5),
             round(self._robot_dca, 1), self._robot_faster, self._robot_close,
-            self._robot_id,
-            self._human_det, round(self._human_dist, 1),
-            round(self._human_angle, 5),
+            self._robot_id, round(self._other_speed, 2),
+            self._human_det, self._human_close, round(self._human_dist, 1),
+            round(self._human_angle, 5), round(rr, 2),
+            round(self._free_front, 1),
         )
 
     def _tick(self):
@@ -198,17 +272,45 @@ class LlmPlanner(Node):
             f"nearest robot: {self._robot_id or '?'} at {self._robot_dist:.2f} m, "
             f"bearing {self._robot_angle:+.0f} deg (negative=right, positive=left), "
             f"predicted closest approach (DCA) {self._robot_dca:.2f} m, "
-            f"is it faster than me: {'yes' if self._robot_faster else 'no'}"
+            f"its speed: {self._other_speed:.2f} m/s "
+            f"({'faster than me' if self._robot_faster else 'not faster than me'})"
         )
+        a = abs(self._robot_angle)
+        if self._robot_close and a <= 20.0:
+            robot += (
+                " — HEAD-ON (robot dead ahead; DCA < 1 m is an imminent "
+                "collision): pass with arc_left or arc_right, do NOT stop"
+            )
+        elif self._robot_close and a > 100.0:
+            robot += (
+                " — the robot is BEHIND me (already passed) — "
+                "do NOT yield, choose 'proceed'"
+            )
+        elif self._robot_close and a > 60.0:
+            robot += (
+                " — the robot is BESIDE me (passing) — "
+                "do NOT yield, choose 'proceed'"
+            )
+        elif self._robot_close:
+            robot += " — in front, off to the side (approaching/crossing)"
         human = (
             f"human: {'present' if self._human_det else 'none'}"
-            + (f" at {self._human_dist:.2f} m, bearing {self._human_angle:+.0f} deg" if self._human_det else "")
+            + (f" at {self._human_dist:.2f} m, bearing {self._human_angle:+.0f} deg, "
+               f"{'CLOSE (within 1.5 m)' if self._human_close else 'not close (>1.5 m)'}"
+               if self._human_det else "")
         )
+        motion = ""
+        if self._human_det:
+            rr, label = self._human_motion()
+            motion = f", motion: {label} (range rate {rr:+.2f} m/s)"
+        free = (f"free space: front {self._free_front:.1f} m, "
+                f"left {self._free_left:.1f} m, right {self._free_right:.1f} m")
         return (
             f"Situation for robot {self.ns}:\n"
             f"- own speed: {self._own_speed:.2f} m/s\n"
             f"- {robot}\n"
-            f"- {human}\n"
+            f"- {human}{motion}\n"
+            f"- {free}\n"
             f"Decide the most socially appropriate action."
         )
 
@@ -289,10 +391,12 @@ class LlmPlanner(Node):
 
     def _write_usage_row(self, action, reason, tin, tout, total, cost):
         now = time.time()
+        fcntl.flock(self._usage_file, fcntl.LOCK_EX)
         self._usage_writer.writerow([
             f"{now:.3f}", f"{now - self._start_time:.3f}", self.ns,
             action, reason, tin, tout, total, f"{cost:.6f}"])
         self._usage_file.flush()
+        fcntl.flock(self._usage_file, fcntl.LOCK_UN)
 
     def write_summary(self):
         """Write per-run totals (calls / tokens / cost). Idempotent."""
@@ -300,10 +404,11 @@ class LlmPlanner(Node):
             return
         self._summary_written = True
         try:
-            with open(self._summary_path, "w", newline="") as f:
+            with open(self._summary_path, "a", newline="") as f:
                 w = csv.writer(f)
-                w.writerow(["robot_id", "calls", "input_tokens",
-                            "output_tokens", "total_tokens", "cost_usd"])
+                if os.path.getsize(self._summary_path) == 0:
+                    w.writerow(["robot_id", "calls", "input_tokens",
+                                "output_tokens", "total_tokens", "cost_usd"])
                 w.writerow([self.ns, self._calls, self._tokens_in,
                             self._tokens_out, self._tokens_in + self._tokens_out,
                             f"{self._cost:.6f}"])
@@ -324,6 +429,17 @@ class LlmPlanner(Node):
         r = String(); r.data = self._last_reason
         self._pub_action.publish(a)
         self._pub_reason.publish(r)
+        # LLM soft speed cap (consumed by velocity_adaptor)
+        if self._last_action == "slow":
+            scale = 0.4
+        elif self._last_action in ("arc_left", "arc_right"):
+            scale = 0.3
+        elif self._last_action in ("yield", "stop"):
+            scale = 0.0
+        else:
+            scale = 1.0
+        fs = Float32(); fs.data = scale
+        self._pub_speed_scale.publish(fs)
 
 
 def main(args=None):

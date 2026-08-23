@@ -155,10 +155,9 @@
       </link>
       <static>true</static>
     </model>
-    <!-- HUMAN placed at robot_1's old spot (-3,0): stands 8 s, then walks
-         EAST across robot_0's path (through the origin) and loops back.
-         Re-enabled 2026-08-22 for human-yield tests.  Comment out the actor
-         block for pure robot-vs-robot runs. -->
+    <!-- HUMAN placed at (-3,0): stands 8 s, then walks EAST across the origin
+         (y=0) and back — crosses both rovers' path to (5,0).  RE-ENABLED
+         (2026-08-23 18:xx): full human+robots test. -->
     <actor name="human_waiting">
       <skin>
         <filename>/usr/share/gazebo-11/media/models/walk.dae</filename>

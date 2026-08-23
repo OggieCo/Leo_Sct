@@ -47,6 +47,7 @@ class RobotProximity(Node):
         self._pub_dist = self.create_publisher(Float32, 'nearest_robot_dist', 10)
         self._pub_dca = self.create_publisher(Float32, 'robot_dca', 10)
         self._pub_faster = self.create_publisher(Bool, 'robot_faster', 10)
+        self._pub_ospeed = self.create_publisher(Float32, 'other_speed', 10)
         self._pub_id = self.create_publisher(String, 'nearest_robot_id', 10)
 
         self._hist = {}   # name -> list[(t_ns, x, y)] for velocity estimation
@@ -132,12 +133,19 @@ class RobotProximity(Node):
         bd = Float32(); bd.data = float(dist)
         bdca = Float32(); bdca.data = float(dca)
         bf = Bool(); bf.data = faster
+        # Actual speed of the nearest other robot (m/s), for the LLM layer
+        if name in vel:
+            ospeed = math.hypot(vel[name][0], vel[name][1])
+        else:
+            ospeed = 0.0
+        bo = Float32(); bo.data = float(ospeed)
         bi = String(); bi.data = name
         self._pub_close.publish(bc)
         self._pub_angle.publish(ba)
         self._pub_dist.publish(bd)
         self._pub_dca.publish(bdca)
         self._pub_faster.publish(bf)
+        self._pub_ospeed.publish(bo)
         self._pub_id.publish(bi)
 
 

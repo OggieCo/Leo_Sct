@@ -1,0 +1,143 @@
+<!--
+  ai_nav.xml - LLM-driven social navigation Behavior Tree (2026-08-23).
+
+  The LLM (llm_planner, gpt-4o-mini) decides the social action; the BT
+  EXECUTES it.  Reactive rules remain as the safety net only when the LLM
+  is silent (empty/unknown action).
+
+  Structure mirrors social_nav.xml (replan + recovery identical) so the
+  only difference is the decision layer — fair A/B for the thesis.
+
+  ACTIONS (llm_action):
+    proceed    -> follow the global path (default)
+    slow       -> follow path at reduced speed (llm_speed_scale consumed by
+                  velocity_adaptor) — anticipatory caution
+    yield      -> stop; capped at 5 s (AiYieldMax), then falls to reactive
+    arc_left   -> smooth left curved detour (turn while driving, no spin)
+    arc_right  -> smooth right curved detour
+    stop       -> emergency 5 s wait
+
+  If llm_action is empty (no planner) or unknown, every branch FAILS and
+  the reactive HumanAwareFollow safety net takes over.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+
+        <RecoveryNode number_of_retries="1" name="SocialFollow">
+          <!-- HEAD-ON AVOIDANCE: atomic, HIGHEST priority.  IsRobotClose
+               sets {robot_avoid} for ~4.5 s on a head-on; while true this
+               branch owns the tree (arc -> follow), so the LLM / reactive
+               layers cannot preempt the maneuver.  Both rovers arc "away"
+               and diverge, then the 1 Hz replan routes each to its goal. -->
+          <ReactiveFallback name="AvoidOrSocial">
+            <BlackboardCheckBool value_A="{robot_avoid}" value_B="true" return_on_mismatch="FAILURE">
+              <Sequence name="AvoidArcThenGo">
+                <Arc adaptive="true" speed="0.3" time_allowance="6" direction="away"/>
+                <FollowPath path="{path}" controller_id="FollowPath"/>
+              </Sequence>
+            </BlackboardCheckBool>
+            <ReactiveFallback name="AiOrReactive">
+            <!-- LLM-DRIVEN PATH (primary) -->
+            <Sequence name="AiPath">
+              <CheckLlmAction/>
+              <ReactiveFallback name="AiActionExec">
+                <Timeout msec="5000" name="AiYieldMax">
+                  <KeepRunningUntilFailure name="AiYield">
+                    <BlackboardCheckString value_A="{llm_action}" value_B="yield" return_on_mismatch="FAILURE">
+                      <Wait wait_duration="1.0"/>
+                    </BlackboardCheckString>
+                  </KeepRunningUntilFailure>
+                </Timeout>
+                <Sequence name="AiSlow">
+                  <BlackboardCheckString value_A="{llm_action}" value_B="slow" return_on_mismatch="FAILURE">
+                    <FollowPath path="{path}" controller_id="FollowPath"/>
+                  </BlackboardCheckString>
+                </Sequence>
+                <Sequence name="AiArcLeft">
+                  <BlackboardCheckString value_A="{llm_action}" value_B="arc_left" return_on_mismatch="FAILURE">
+                    <Arc adaptive="true" speed="0.3" time_allowance="6" direction="left"/>
+                  </BlackboardCheckString>
+                </Sequence>
+                <Sequence name="AiArcRight">
+                  <BlackboardCheckString value_A="{llm_action}" value_B="arc_right" return_on_mismatch="FAILURE">
+                    <Arc adaptive="true" speed="0.3" time_allowance="6" direction="right"/>
+                  </BlackboardCheckString>
+                </Sequence>
+                <Sequence name="AiStop">
+                  <BlackboardCheckString value_A="{llm_action}" value_B="stop" return_on_mismatch="FAILURE">
+                    <Wait wait_duration="5"/>
+                  </BlackboardCheckString>
+                </Sequence>
+                <Sequence name="AiProceed">
+                  <BlackboardCheckString value_A="{llm_action}" value_B="proceed" return_on_mismatch="FAILURE">
+                    <FollowPath path="{path}" controller_id="FollowPath"/>
+                  </BlackboardCheckString>
+                </Sequence>
+              </ReactiveFallback>
+            </Sequence>
+            <!-- REACTIVE SAFETY NET (fallback): used when the LLM is silent -->
+            <ReactiveFallback name="HumanAwareFollow">
+              <Timeout msec="4000" name="YieldMax4s">
+                <KeepRunningUntilFailure name="YieldToHuman">
+                  <Sequence name="YieldCheck">
+                    <IsHumanClose/>
+                    <BlackboardCheckBool value_A="{human_close}" value_B="true" return_on_mismatch="FAILURE">
+                      <Wait wait_duration="1.0"/>
+                    </BlackboardCheckBool>
+                  </Sequence>
+                </KeepRunningUntilFailure>
+              </Timeout>
+              <ReactiveFallback name="RobotAwareFollow">
+                <Timeout msec="10000" name="RobotYieldMax">
+                  <KeepRunningUntilFailure name="YieldToRobot">
+                    <Sequence name="RobotYieldCheck">
+                      <IsRobotClose/>
+                      <BlackboardCheckBool value_A="{robot_close}" value_B="true" return_on_mismatch="FAILURE">
+                        <Wait wait_duration="1.0"/>
+                      </BlackboardCheckBool>
+                    </Sequence>
+                  </KeepRunningUntilFailure>
+                </Timeout>
+                <ReactiveFallback name="ArcOrFollow">
+                  <Sequence name="ArcThenGo">
+                    <BlackboardCheckBool value_A="{just_yielded}" value_B="true" return_on_mismatch="FAILURE">
+                      <Sequence name="ArcOnce">
+                        <Arc adaptive="true" speed="0.3" time_allowance="6" direction="away"/>
+                      </Sequence>
+                    </BlackboardCheckBool>
+                    <FollowPath path="{path}" controller_id="FollowPath"/>
+                  </Sequence>
+                  <FollowPath path="{path}" controller_id="FollowPath"/>
+                </ReactiveFallback>
+              </ReactiveFallback>
+            </ReactiveFallback>
+          </ReactiveFallback>
+          </ReactiveFallback>
+          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+
+      <!-- Recovery fallback when stuck / planning fails -->
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearingActions">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <!-- NO in-place Spin: real rovers have adhesive-taped wheels -->
+          <Wait wait_duration="5"/>
+          <BackUp backup_dist="0.30" backup_speed="0.05"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

@@ -57,17 +57,19 @@ public:
   : BT::ConditionNode(name, conf),
     robot_close_(false), robot_angle_(0.0), robot_dca_(100.0),
     robot_faster_(false),
-    yielding_(false), suppressing_(false),
+    yielding_(false), suppressing_(false), avoiding_(false),
     yield_started_s_(0.0), suppress_until_s_(0.0), clear_since_s_(0.0),
+    avoid_until_s_(0.0),
     block_angle_deg_(20.0), side_cone_deg_(20.0), dca_margin_(0.6),
     yield_max_s_(10.0), cooldown_s_(8.0), release_debounce_s_(1.5),
-    hold_cone_deg_(45.0)
+    hold_cone_deg_(45.0), avoid_window_s_(4.5)
   {
     rclcpp::Node::SharedPtr node;
     if (config().blackboard->get("node", node) && node) {
       local_node_ = std::make_shared<rclcpp::Node>(
         "is_robot_close_node", node->get_namespace(),
         rclcpp::NodeOptions());
+      // head-on -> arc-avoidance (both rovers diverge), no tie-break needed
       sub_close_ = local_node_->create_subscription<std_msgs::msg::Bool>(
         "robot_close", rclcpp::QoS(10),
         [this](const std_msgs::msg::Bool::SharedPtr msg) {
@@ -94,13 +96,15 @@ public:
       executor_->add_node(local_node_);
       spin_thread_ = std::make_shared<std::thread>(
         [this]() { executor_->spin(); });
+      // {robot_avoid} gates the atomic arc branch in both BT trees.
+      config().blackboard->set("robot_avoid", false);
       RCLCPP_INFO(rclcpp::get_logger("IsRobotClose"),
                   "IsRobotClose: subscribed to %s/robot_close + robot_angle "
                   "+ robot_dca + robot_faster "
-                  "(head-on=%.0f deg, side=%.0f deg, dca=%.2f m, "
-                  "yield=%.0fs, cooldown=%.0fs)",
-                  node->get_namespace(), block_angle_deg_, side_cone_deg_,
-                  dca_margin_, yield_max_s_, cooldown_s_);
+                  "(head-on=%.0f deg -> arc avoid %.1fs window, side=%.0f deg, "
+                  "dca=%.2f m, yield=%.0fs, cooldown=%.0fs)",
+                  node->get_namespace(), block_angle_deg_, avoid_window_s_,
+                  side_cone_deg_, dca_margin_, yield_max_s_, cooldown_s_);
     } else {
       RCLCPP_WARN(rclcpp::get_logger("IsRobotClose"),
                   "blackboard has no 'node' — cannot subscribe to robot_close");
@@ -125,15 +129,15 @@ public:
       now = node->now().seconds();
     }
 
-    // YIELD TRIGGER (right-hand traffic + speed priority).
-    //   head-on  (|angle| <= block): a rover dead-ahead within close range is
-    //              ALWAYS a conflict -> yield regardless of DCA.  (The DCA
-    //              predictor is unreliable at slow/coasting speeds and would
-    //              report the raw distance > margin, letting a head-on
-    //              collision through — observed run_2026-08-22_17-43-36.)
-    //   side conflict (DCA <= margin): only a genuine predicted miss is a
-    //              conflict; then yield if the other robot is FASTER than us,
-    //              or if it is on OUR RIGHT (right-hand traffic).
+    // CLASSIFY (right-hand traffic + speed priority).
+    //   head-on  (|angle| <= block): AVOIDANCE, not a stop.  Both rovers run
+    //              the atomic arc maneuver (arc "away") — they face OPPOSITE
+    //              ways so they DIVERGE and pass; then the 1 Hz replan routes
+    //              each back toward its goal.  Guaranteed at the BT layer via
+    //              {robot_avoid} (the LLM / reactive layers cannot preempt it).
+    //   side conflict (DCA <= margin): a rover CROSSING our path -> genuine
+    //              give-way; yield if the other is FASTER than us, or if it is
+    //              on OUR RIGHT (right-hand traffic).
     //   robot_angle sign: + = LEFT, - = RIGHT.
     const bool head_on =
       robot_close_ &&
@@ -144,13 +148,34 @@ public:
     const bool trigger =
       head_on || (side_conflict && (robot_faster_ || on_our_right));
 
-    // HOLD: stay stopped until the other robot has ACTUALLY passed — its
-    // bearing moved beyond the hold cone (it is beside/behind us) or it left
-    // close range.  Then continue straight with minimal deviation.  The arc
-    // is only the fallback when the yield times out without a pass.
+    // HOLD: for side-conflict yields — stay stopped until the other robot has
+    // ACTUALLY passed (bearing beyond the hold cone) or left close range.
     const bool hold =
       robot_close_ &&
       (std::abs(robot_angle_) <= hold_cone_deg_ || on_our_right);
+
+    // HEAD-ON AVOIDANCE (independent state machine): on a fresh head-on, arm
+    // the atomic arc branch for avoid_window_s_ (covers the ~3.3 s arc + a
+    // little follow), then release so the tree resumes normal navigation, and
+    // cool down before any re-arc.
+    if (head_on && !suppressing_ && !avoiding_) {
+      avoiding_ = true;
+      avoid_until_s_ = now + avoid_window_s_;
+      publish_event("ROBOT_AVOID_START");
+      config().blackboard->set("robot_avoid", true);
+      // The ai tree (ai_nav.xml) consumes {robot_avoid} atomically; the
+      // reactive tree (social_nav.xml) consumes {just_yielded} for its own
+      // ArcOrFollow.  Setting both keeps the shared node tree-agnostic.
+      config().blackboard->set("just_yielded", true);
+    }
+    if (avoiding_ && now >= avoid_until_s_) {
+      avoiding_ = false;
+      suppressing_ = true;
+      suppress_until_s_ = now + cooldown_s_;
+      publish_event("ROBOT_AVOID_END");
+      config().blackboard->set("robot_avoid", false);
+      config().blackboard->set("just_yielded", false);
+    }
 
     // Cooldown: let the robot resume once the suppression window elapses.
     if (suppressing_ && now >= suppress_until_s_) {
@@ -159,8 +184,8 @@ public:
       config().blackboard->set("just_yielded", false);  // spin flag consumed
     }
 
-    // Yield decision: trigger satisfied AND not cooling down.
-    const bool should_yield = trigger && !suppressing_;
+    // SIDE-CONFLICT YIELD (head-on goes through robot_avoid, not here).
+    const bool should_yield = trigger && !suppressing_ && !avoiding_;
 
     if (should_yield && !yielding_) {
       yielding_ = true;
@@ -180,11 +205,10 @@ public:
         clear_since_s_ = now;                 // conflict gone -> start debounce
       }
 
-      // Give the other robot a fixed window, then stop + cool down.
-      // The arc is ONLY the "still blocked after the window" fallback: if the
-      // other robot has already passed (bearing beyond the hold cone), resume
-      // straight instead — otherwise a very close pass that stays inside
-      // close-range the whole window would arc anyway (observed 18-09-02).
+      // Give the crossing rover the full give-way window, then stop + cool
+      // down; the arc is the "still blocked after the window" fallback.  If
+      // the other robot has already passed (bearing beyond the hold cone),
+      // resume straight instead.
       if (now - yield_started_s_ >= yield_max_s_) {
         if (hold) {
           yielding_ = false;
@@ -192,7 +216,7 @@ public:
           suppress_until_s_ = now + cooldown_s_;
           clear_since_s_ = 0.0;
           publish_event("ROBOT_SUPPRESS_START");
-          // Signal the tree: the yield timed out -> run the one-time arc.
+          // Signal the tree: run the one-time arc, then FollowPath replans.
           config().blackboard->set("just_yielded", true);
         } else {
           // Other robot already passed -> resume, no arc.
@@ -248,9 +272,11 @@ private:
   bool robot_faster_;
   bool yielding_;
   bool suppressing_;
+  bool avoiding_;                 // head-on avoidance maneuver in progress
   double yield_started_s_;
   double suppress_until_s_;
   double clear_since_s_;
+  double avoid_until_s_;
   double block_angle_deg_;
   double side_cone_deg_;
   double dca_margin_;
@@ -258,6 +284,7 @@ private:
   double cooldown_s_;
   double release_debounce_s_;
   double hold_cone_deg_;
+  double avoid_window_s_;         // s the head-on arc branch stays active
 };
 
 }  // namespace social_bt

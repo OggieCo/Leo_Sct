@@ -26,8 +26,9 @@ setup(
         ('share/' + package_name + '/config/nav2', ['config/nav2/slam_toolbox.yaml']),
         ('share/' + package_name + '/config/nav2', ['config/nav2/nav2_generic.yaml']),
 
-        #behavior tree files (social_nav.xml is the active runtime tree)
+        #behavior tree files (social_nav.xml = reactive baseline, ai_nav.xml = LLM-driven)
         ('share/' + package_name + '/config/bt', ['config/bt/social_nav.xml']),
+        ('share/' + package_name + '/config/bt', ['config/bt/ai_nav.xml']),
         ('share/' + package_name + '/config/bt', ['config/bt/navigate_to_pose_w_replanning_and_recovery.xml']),
 
         ('share/' + package_name + '/config', ['config/supervisor.yaml']),

@@ -36,47 +36,12 @@
           </RecoveryNode>
         </RateController>
 
-        <!-- SOCIAL FOLLOW: LLM-planned primary, reactive rules as fallback -->
+        <!-- SOCIAL FOLLOW: PURE REACTIVE baseline.  The LLM-driven tree now
+             lives in ai_nav.xml — switch with `bt:=ai` on nav2_slam_all. -->
         <RecoveryNode number_of_retries="1" name="SocialFollow">
-          <ReactiveFallback name="LlmOrReactive">
-            <!-- LLM-GUIDED PATH (primary): active when llm_planner publishes
-                 an action.  CheckLlmAction refreshes {llm_action}/{llm_reason};
-                 an empty action (no planner) fails this path so the reactive
-                 fallback below takes over. -->
-            <Sequence name="LlmPath">
-              <CheckLlmAction/>
-              <!-- Execute the LLM's action ONLY when it is non-empty.  Empty
-                   action (no LLM / no decision) makes EVERY branch below
-                   FAIL, so LlmPath FAILS and the reactive fallback
-                   (HumanAwareFollow) takes over.  NOTE: BlackboardCheckString
-                   is a DECORATOR (ticks child when value_A == value_B); the
-                   old wrapper value_B="" had the logic INVERTED — it always
-                   ran LlmActionExec's FollowPath and the reactive rules
-                   never executed (caused the 17-43 / 17-54 collisions). -->
-              <ReactiveFallback name="LlmActionExec">
-                <KeepRunningUntilFailure name="LlmYield">
-                  <BlackboardCheckString value_A="{llm_action}" value_B="yield" return_on_mismatch="FAILURE">
-                    <Wait wait_duration="1.0"/>
-                  </BlackboardCheckString>
-                </KeepRunningUntilFailure>
-                <Sequence name="LlmArc">
-                  <BlackboardCheckString value_A="{llm_action}" value_B="arc" return_on_mismatch="FAILURE">
-                    <Arc arc_angle="1.05" radius="0.95" speed="0.3" time_allowance="6" direction="away"/>
-                  </BlackboardCheckString>
-                </Sequence>
-                <Sequence name="LlmStop">
-                  <BlackboardCheckString value_A="{llm_action}" value_B="stop" return_on_mismatch="FAILURE">
-                    <Wait wait_duration="5"/>
-                  </BlackboardCheckString>
-                </Sequence>
-                <Sequence name="LlmProceed">
-                  <BlackboardCheckString value_A="{llm_action}" value_B="proceed" return_on_mismatch="FAILURE">
-                    <FollowPath path="{path}" controller_id="FollowPath"/>
-                  </BlackboardCheckString>
-                </Sequence>
-              </ReactiveFallback>
-            </Sequence>
-            <!-- REACTIVE PATH (safety fallback): used when no LLM action -->
+            <!-- REACTIVE PATH: pure BT social rules (no LLM).  Head-on
+                 avoidance uses the ArcOrFollow arc below, gated by
+                 {just_yielded} (set by IsRobotClose on a head-on). -->
             <ReactiveFallback name="HumanAwareFollow">
             <!-- YIELD BRANCH (human): ticked EVERY tick.  IsHumanClose
                  refreshes {human_close}; TimeOut gives up after 4 s. -->
@@ -111,7 +76,7 @@
                 <Sequence name="ArcThenGo">
                   <BlackboardCheckBool value_A="{just_yielded}" value_B="true" return_on_mismatch="FAILURE">
                     <Sequence name="ArcOnce">
-                      <Arc arc_angle="1.05" radius="0.95" speed="0.3" time_allowance="6" direction="away"/>
+                      <Arc adaptive="true" speed="0.3" time_allowance="6" direction="away"/>
                     </Sequence>
                   </BlackboardCheckBool>
                   <FollowPath path="{path}" controller_id="FollowPath"/>
@@ -120,7 +85,7 @@
               </ReactiveFallback>
             </ReactiveFallback>
           </ReactiveFallback>
-          </ReactiveFallback>
+
           <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
         </RecoveryNode>
       </PipelineSequence>
