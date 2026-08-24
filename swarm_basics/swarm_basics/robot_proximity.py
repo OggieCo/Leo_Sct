@@ -46,6 +46,7 @@ class RobotProximity(Node):
         self._pub_angle = self.create_publisher(Float32, 'robot_angle', 10)
         self._pub_dist = self.create_publisher(Float32, 'nearest_robot_dist', 10)
         self._pub_dca = self.create_publisher(Float32, 'robot_dca', 10)
+        self._pub_opp = self.create_publisher(Float32, 'robot_opposition_deg', 10)
         self._pub_faster = self.create_publisher(Bool, 'robot_faster', 10)
         self._pub_ospeed = self.create_publisher(Float32, 'other_speed', 10)
         self._pub_id = self.create_publisher(String, 'nearest_robot_id', 10)
@@ -127,6 +128,20 @@ class RobotProximity(Node):
                 tca = -(rx * vrx + ry * vry) / v2
                 dca = math.hypot(rx + vrx * tca, ry + vry * tca)
             faster = math.hypot(ox_, oy_) > math.hypot(mx, my) + 0.1
+
+        # Heading opposition: 0 = perfectly head-on (headings 180 deg apart),
+        # 90 = perpendicular crossing, 180 = same heading.  Lets the reactive
+        # away-arc and the LLM "headon" commit distinguish a mirror-symmetric
+        # head-on (away-arcs DIVERGE) from a crossing (away-arcs CONVERGE,
+        # run_2026-08-24_15-47-45).
+        hdiff = math.degrees(my_yaw) - math.degrees(poses[name][2])
+        while hdiff > 180.0:
+            hdiff -= 360.0
+        while hdiff < -180.0:
+            hdiff += 360.0
+        bopp = Float32()
+        bopp.data = float(180.0 - abs(hdiff))
+        self._pub_opp.publish(bopp)
 
         bc = Bool(); bc.data = close
         ba = Float32(); ba.data = float(rel)

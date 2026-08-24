@@ -42,6 +42,7 @@
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/string.hpp>
 
+#include <chrono>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -56,12 +57,17 @@ public:
   IsRobotClose(const std::string & name, const BT::NodeConfiguration & conf)
   : BT::ConditionNode(name, conf),
     robot_close_(false), robot_angle_(0.0), robot_dca_(100.0),
-    robot_faster_(false),
+    robot_opposition_deg_(180.0), robot_faster_(false),
     yielding_(false), suppressing_(false), avoiding_(false),
     yield_started_s_(0.0), suppress_until_s_(0.0), clear_since_s_(0.0),
     avoid_until_s_(0.0),
-    block_angle_deg_(30.0), head_on_deg_(10.0), side_cone_deg_(20.0),
-    row_cone_deg_(10.0), dca_margin_(0.6),
+    // head_on_deg_ is the FRONTAL CONE for a DCA-gated collision course, not
+    // a strict dead-ahead test: in an offset head-on the bearing stays large
+    // (run_2026-08-24_15-33-38: +14..22 deg) while DCA == the lateral offset
+    // (0.6 m) — a 10 deg cone is unreachable until contact.  The DCA<=margin
+    // gate alone excludes crossings (90/135-deg runs have DCA ~1.4-2.2 m).
+    block_angle_deg_(30.0), head_on_deg_(45.0), head_opp_deg_(30.0),
+    side_cone_deg_(20.0), row_cone_deg_(10.0), dca_margin_(0.6),
     yield_max_s_(6.0), cooldown_s_(8.0), release_debounce_s_(1.5),
     hold_cone_deg_(40.0), avoid_window_s_(4.5)
   {
@@ -86,6 +92,11 @@ public:
         [this](const std_msgs::msg::Float32::SharedPtr msg) {
           robot_dca_ = msg->data;
         });
+      sub_opp_ = local_node_->create_subscription<std_msgs::msg::Float32>(
+        "robot_opposition_deg", rclcpp::QoS(10),
+        [this](const std_msgs::msg::Float32::SharedPtr msg) {
+          robot_opposition_deg_ = msg->data;
+        });
       sub_faster_ = local_node_->create_subscription<std_msgs::msg::Bool>(
         "robot_faster", rclcpp::QoS(10),
         [this](const std_msgs::msg::Bool::SharedPtr msg) {
@@ -95,17 +106,25 @@ public:
         "bt_social_event", 10);
       executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
       executor_->add_node(local_node_);
+      // Always-on sensor: run the classifier + state machine at 10 Hz on the
+      // node's own executor so {robot_avoid} / {just_yielded} can be armed
+      // even when the tree is inside the LLM branch and never ticks this node
+      // (wander collision run_2026-08-24_15-16-52: both robots committed "way"
+      // and crept into each other because IsRobotClose was never ticked).
+      update_timer_ = local_node_->create_wall_timer(
+          std::chrono::milliseconds(100), [this]() { compute(); });
       spin_thread_ = std::make_shared<std::thread>(
         [this]() { executor_->spin(); });
       // {robot_avoid} gates the atomic arc branch in both BT trees.
       config().blackboard->set("robot_avoid", false);
       RCLCPP_INFO(rclcpp::get_logger("IsRobotClose"),
                   "IsRobotClose: subscribed to %s/robot_close + robot_angle "
-                  "+ robot_dca + robot_faster "
-                  "(head-on=%.0f deg -> arc avoid %.1fs window, side=%.0f deg, "
-                  "dca=%.2f m, yield=%.0fs, cooldown=%.0fs)",
-                  node->get_namespace(), block_angle_deg_, avoid_window_s_,
-                  side_cone_deg_, dca_margin_, yield_max_s_, cooldown_s_);
+                  "+ robot_dca + robot_faster + robot_opposition_deg "
+                  "(head-on=%.0f deg opp<=%.0f -> arc avoid %.1fs window, "
+                  "side=%.0f deg, dca=%.2f m, yield=%.0fs, cooldown=%.0fs)",
+                  node->get_namespace(), block_angle_deg_, head_opp_deg_,
+                  avoid_window_s_, side_cone_deg_, dca_margin_, yield_max_s_,
+                  cooldown_s_);
     } else {
       RCLCPP_WARN(rclcpp::get_logger("IsRobotClose"),
                   "blackboard has no 'node' — cannot subscribe to robot_close");
@@ -122,7 +141,8 @@ public:
     }
   }
 
-  BT::NodeStatus tick() override
+  // Classifier + state machine, driven by the 10 Hz timer (see constructor).
+  void compute()
   {
     rclcpp::Node::SharedPtr node;
     double now = 0.0;
@@ -144,8 +164,24 @@ public:
     // Offset/near-head-on crossings must NOT both arc — their "away" arcs can
     // CONVERGE and collide (run_2026-08-24_12-57-56).  They are resolved by
     // RIGHT-OF-WAY (right-hand traffic) instead.
+    // GENUINE head-on = frontal COLLISION COURSE: the other robot is ahead of
+    // us (wide 45 deg frontal cone) AND the predicted closest approach is
+    // inside the danger margin.  Requiring DCA avoids the false positive where
+    // the other robot merely passes directly in front during a crossing
+    // (90/135-deg runs: DCA ~1.4-2.2 m) — that is a yield, not an arc.  The
+    // wide cone catches OFFSET head-ons too: with parallel 0.6 m lanes each
+    // robot sees the other at +14..22 deg (on its LEFT) and DCA == the 0.6 m
+    // offset, so a 10 deg cone never armed the atomic away-arc and both
+    // robots deadlocked on right-of-way (run_2026-08-24_15-33-38).
+    // HEADING OPPOSITION (0 = head-on, 90 = perpendicular, 180 = same heading)
+    // is the discriminator that keeps crossings out: a 135-deg crossing with
+    // simultaneous arrival also has DCA ~0.03 m and low bearing, but its
+    // "away" arcs CONVERGE (run_2026-08-24_15-47-45) — only real head-ons
+    // (headings ~180 deg apart) may arc.
     const bool head_on =
-      robot_close_ && std::abs(robot_angle_) <= head_on_deg_;
+      robot_close_ && std::abs(robot_angle_) <= head_on_deg_ &&
+      robot_dca_ <= dca_margin_ &&
+      robot_opposition_deg_ <= head_opp_deg_;
     const bool side_conflict =
       robot_close_ && robot_dca_ <= dca_margin_;
     const bool on_our_right = robot_angle_ < -side_cone_deg_;
@@ -250,7 +286,14 @@ public:
     // Feed the tree: robot_close true while we are actually yielding.
     config().blackboard->set("robot_close", yielding_);
     config().blackboard->set("robot_angle", static_cast<double>(robot_angle_));
+  }
 
+  BT::NodeStatus tick() override
+  {
+    // All state is maintained by the 10 Hz timer (compute()); the tree only
+    // reads the blackboard flags.  Running compute() here too would
+    // double-publish the lifecycle events when the reactive tree ticks this
+    // node at 100 Hz.
     return BT::NodeStatus::SUCCESS;
   }
 
@@ -272,8 +315,10 @@ private:
   }
 
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_close_;
+  rclcpp::TimerBase::SharedPtr update_timer_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_angle_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_dca_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_opp_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_faster_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr event_pub_;
   rclcpp::Node::SharedPtr local_node_;
@@ -283,6 +328,7 @@ private:
   bool robot_close_;
   float robot_angle_;
   float robot_dca_;
+  float robot_opposition_deg_;
   bool robot_faster_;
   bool yielding_;
   bool suppressing_;
@@ -293,6 +339,7 @@ private:
   double avoid_until_s_;
   double block_angle_deg_;
   double head_on_deg_;
+  double head_opp_deg_;
   double side_cone_deg_;
   double row_cone_deg_;
   double dca_margin_;

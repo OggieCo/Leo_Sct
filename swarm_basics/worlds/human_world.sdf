@@ -155,9 +155,9 @@
       </link>
       <static>true</static>
     </model>
-    <!-- HUMAN COMMENTED OUT (2026-08-23 19:xx): pure 135-deg robot-vs-robot
-         crossing test.  Uncomment to re-enable the walking human.
-         Path: (-2,0) <-> (+2,0), 0.25 m/s, 8 s stands. -->
+    <!-- HUMAN COMMENTED OUT (2026-08-24): robot-robot only again.
+         Path: (-2,0) <-> (+2,0), 0.25 m/s, 8 s stands.
+         Uncomment to re-enable the walking human. -->
     <!--
     <actor name="human_waiting">
       <skin>

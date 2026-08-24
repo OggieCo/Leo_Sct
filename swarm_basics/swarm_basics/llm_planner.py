@@ -97,6 +97,13 @@ class LlmPlanner(Node):
         self._robot_close = False
         self._robot_angle = 0.0
         self._robot_dca = 100.0
+        # Heading opposition: 0 = dead head-on (headings 180 deg apart),
+        # 90 = perpendicular, 180 = same heading.  Distinguishes a true
+        # head-on from a crossing whose robot passes in front (run_2026-08-24
+        # _15-47-45: robot_1 saw robot_0 at +24 deg in a 135-deg crossing and
+        # wrongly committed "headon", then kept arcing left into the yielding
+        # robot_0).
+        self._robot_opposition_deg = 180.0
         self._robot_faster = False
         self._robot_dist = float("inf")
         self._robot_id = ""
@@ -104,6 +111,9 @@ class LlmPlanner(Node):
         self._human_close = False
         self._human_dist = -1.0
         self._human_angle = 0.0
+        # Debounce: once the human stops being detected, wait 1.5 s before
+        # declaring it clear (noisy YOLO/depth detector).
+        self._human_gone_since = 0.0
         self._own_speed = 0.0
         self._other_speed = 0.0
         self._human_hist = []       # [(t, dist)] for range-rate
@@ -134,6 +144,16 @@ class LlmPlanner(Node):
         # slammed to a stop at 2.2 m separation).  The full stop commits only
         # at the yield point.
         self._yield_stop_dist = 1.75
+        # Right-of-way tie-break: bearings in this frontal band (other robot
+        # ahead, slightly to our left) are an ambiguous oblique approach —
+        # commit "headon" (both arc) instead of "way", so two robots that BOTH
+        # see the other on their left do not deadlock into a collision
+        # (run_2026-08-24_15-16-52: robot_0 +28 deg, robot_1 +50 deg -> both
+        # "way" -> crept into each other).  The "headon" commit additionally
+        # requires heading opposition <= _row_opp_deg: a low bearing alone is
+        # not a head-on when a crossing robot sweeps in front (15-47-45).
+        self._row_front_deg = 30.0
+        self._row_opp_deg = 30.0
         self._yield_started_t = 0.0  # when the current yield action began
         self._stall_since = 0.0      # how long the other robot has stalled ahead
         self._rob_ang_prev = None    # previous other-robot bearing (stall check)
@@ -170,6 +190,7 @@ class LlmPlanner(Node):
         self.create_subscription(Bool, "robot_close", self._cb_robot_close, 10)
         self.create_subscription(Float32, "robot_angle", self._cb_robot_angle, 10)
         self.create_subscription(Float32, "robot_dca", self._cb_robot_dca, 10)
+        self.create_subscription(Float32, "robot_opposition_deg", self._cb_robot_opp, 10)
         self.create_subscription(Bool, "robot_faster", self._cb_robot_faster, 10)
         self.create_subscription(Float32, "nearest_robot_dist", self._cb_robot_dist, 10)
         self.create_subscription(String, "nearest_robot_id", self._cb_robot_id, 10)
@@ -198,6 +219,7 @@ class LlmPlanner(Node):
     def _cb_robot_close(self, m): self._robot_close = bool(m.data)
     def _cb_robot_angle(self, m): self._robot_angle = float(m.data)
     def _cb_robot_dca(self, m): self._robot_dca = float(m.data)
+    def _cb_robot_opp(self, m): self._robot_opposition_deg = float(m.data)
     def _cb_robot_faster(self, m): self._robot_faster = bool(m.data)
     def _cb_robot_dist(self, m): self._robot_dist = float(m.data)
     def _cb_robot_id(self, m): self._robot_id = m.data
@@ -276,12 +298,27 @@ class LlmPlanner(Node):
         if self._row is None:
             # New encounter -> arm the deterministic release again.
             self._det_released = False
-            if abs(self._robot_angle) <= 10.0:
+            a = abs(self._robot_angle)
+            # Heading opposition (0 = dead head-on, 90 = perpendicular, 180 =
+            # same heading): a low bearing is only a HEAD-ON when the headings
+            # are actually opposed.  A crossing robot passing in front can
+            # have a low bearing too (run_2026-08-24_15-47-45: robot_1 saw
+            # robot_0 at +24 deg in a 135-deg crossing and wrongly committed
+            # "headon", then kept arcing left into the yielding robot_0).
+            head_on_like = self._robot_opposition_deg <= self._row_opp_deg
+            if head_on_like and a <= 10.0:
                 self._row = "headon"   # true head-on: both arc
             elif self._robot_angle < 0:
                 self._row = "yield"    # other on our right -> we yield
+            elif head_on_like and a <= self._row_front_deg:
+                # Other ahead-LEFT within the frontal band AND headings
+                # opposed: mirror-symmetric oblique head-on (both see the
+                # other on their left) -> both arc instead of both claiming
+                # "way" and deadlocking (run_2026-08-24_15-16-52).  Without
+                # heading opposition it is a crossing -> right-of-way below.
+                self._row = "headon"
             else:
-                self._row = "way"      # other on our left -> we have the way
+                self._row = "way"      # other clearly on our left -> the way
 
     def _update_stall(self):
         """Track how long the other robot has been GENUINELY stalled directly
@@ -324,11 +361,41 @@ class LlmPlanner(Node):
         reverted: remove the two call sites in _tick and _decide."""
         a = abs(self._robot_angle)
         if a > 50.0:
-            return True
+            # The other robot has cleared our FRONT, but may still be only
+            # ~0.6 m away laterally (run_2026-08-24_15-56-13: bearing crossed
+            # 50 deg at 0.60 m range and robot_0 resumed straight into the
+            # passer).  Only resume once it has actually left our corridor.
+            lat = self._robot_dist * math.sin(math.radians(self._robot_angle))
+            return self._robot_dist > 1.0 or abs(lat) > 0.8
         if a <= 35.0:
             return False
         lat = self._robot_dist * math.sin(math.radians(self._robot_angle))
         return self._range_rate > 0.05 and abs(lat) > 0.8
+
+    def _human_cleared(self):
+        """DETERMINISTIC human release — adaptive to ANY human geometry.
+
+        The robot may resume once the human is genuinely OUT of its forward
+        corridor, so the LLM's endless 'slow' can never freeze it on the
+        human's path (run_2026-08-24_16-13-56: robot stalled at y=0.09 on the
+        human's walking line).  Release if ANY:
+          (a) the human is no longer detected for a 1.5 s debounce (noisy
+              detector / walked away / out of view),
+          (b) the human is behind the robot (bearing magnitude > 90 deg),
+          (c) the human is > 1.2 m laterally off the robot's heading line and
+              not actively closing on it (range rate > -0.1) — it has passed
+              the closest approach, safe to cross behind it.
+        """
+        if not self._human_det:
+            if self._human_gone_since == 0.0:
+                self._human_gone_since = time.time()
+            return time.time() - self._human_gone_since >= 1.5
+        self._human_gone_since = 0.0
+        if abs(self._human_angle) > 90.0:
+            return True                       # human behind us
+        lat = self._human_dist * math.sin(math.radians(self._human_angle))
+        rr, _ = self._human_motion()
+        return abs(lat) > 1.2 and rr > -0.1
 
     # --- event-driven tick -------------------------------------------------
     def _signature(self):
@@ -373,6 +440,32 @@ class LlmPlanner(Node):
                 elif self._last_action != "yield":
                     self._last_action = "yield"
                     self._last_reason = "yield — stopped at the yield point"
+                    self._publish()
+        # HUMAN deterministic hold/release (every tick — the LLM alone dithers
+        # in 'slow' with no resolution and the robot froze on the human's
+        # walking line, run_2026-08-24_16-13-56).  Humans always have
+        # priority: while one is still in the corridor ahead, hold; once it is
+        # clearly out of the way (any geometry — see _human_cleared), resume.
+        # Skipped during an active robot yield (the robot logic owns that).
+        if self._human_det and self._row != "yield":
+            if self._human_cleared():
+                if self._last_action in ("slow", "yield"):
+                    self._last_action = "proceed"
+                    self._last_reason = ("human has cleared — resuming "
+                                         "(deterministic release)")
+                    self._publish()
+            else:
+                if (self._human_dist > self._yield_stop_dist and
+                        self._own_speed > 0.05):
+                    if self._last_action != "slow":
+                        self._last_action = "slow"
+                        self._last_reason = ("human ahead — decelerating, "
+                                             "will hold until it clears")
+                        self._publish()
+                elif self._last_action != "yield":
+                    self._last_action = "yield"
+                    self._last_reason = ("human close ahead — holding "
+                                         "until it clears")
                     self._publish()
         sig = self._signature()
         changed = sig != self._last_signature
@@ -539,6 +632,26 @@ class LlmPlanner(Node):
         elif self._det_released and self._row == "yield":
             action = "proceed"
             reason = "pass cleared — already released (deterministic latch)"
+
+        # HUMAN deterministic layer (overrides the LLM's human dithering —
+        # run_2026-08-24_16-13-56: five identical 'slow — human approaching
+        # but not close yet' with no resolution froze the robot on the human's
+        # walking line).  Human has priority: hold while it blocks, resume the
+        # moment it has cleared.  Skipped during an active robot yield.
+        if self._human_det and self._row != "yield":
+            if self._human_cleared():
+                if action in ("slow", "yield"):
+                    action = "proceed"
+                    reason = ("human has cleared — resuming "
+                              "(deterministic release)")
+            else:
+                if self._human_dist > self._yield_stop_dist and \
+                        self._own_speed > 0.05:
+                    action = "slow"
+                    reason = "human ahead — decelerating toward the hold point"
+                else:
+                    action = "yield"
+                    reason = "human close ahead — holding until it clears"
 
         self._last_action = action
         self._last_reason = reason
