@@ -9,14 +9,14 @@ ROBOT_POSITIONS = [
     #("robot_1",  0, -2.5, 1.5708),
 
     # 90-degree CROSSING test: robot_0 drives south along x=0,
-    #("robot_0",  0.0,  3.0, 4.7124),   # (0, 3)   facing -y -> drives south
-    #("robot_1", -3.0,  0.0, 0.0),      # (-3, 0)  facing +x -> drives east
+    ("robot_0",  0.0,  3.0, 4.7124),   # (0, 3)   facing -y -> drives south
+    ("robot_1", -3.0,  0.0, 0.0),      # (-3, 0)  facing +x -> drives east
 
     # 135-degree CROSSING (active): robot_0 drives south along x=0,
     # robot_1 drives northeast along y=x — headings differ by 135 deg,
     # paths intersect near the origin.
-    ("robot_0",  0.0,  3.0, 4.7124),      # (0, 3)   facing -y  (south)
-    ("robot_1", -2.12, -2.12, 0.7854),    # (-2.12,-2.12) facing +45 deg
+    #("robot_0",  0.0,  3.0, 4.7124),      # (0, 3)   facing -y  (south)
+    #("robot_1", -2.12, -2.12, 0.7854),    # (-2.12,-2.12) facing +45 deg
 ]
 
 

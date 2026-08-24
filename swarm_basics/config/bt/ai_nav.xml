@@ -49,7 +49,7 @@
             <Sequence name="AiPath">
               <CheckLlmAction/>
               <ReactiveFallback name="AiActionExec">
-                <Timeout msec="5000" name="AiYieldMax">
+                <Timeout msec="10000" name="AiYieldMax">
                   <KeepRunningUntilFailure name="AiYield">
                     <BlackboardCheckString value_A="{llm_action}" value_B="yield" return_on_mismatch="FAILURE">
                       <Wait wait_duration="1.0"/>

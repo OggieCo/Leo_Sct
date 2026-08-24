@@ -45,11 +45,21 @@ public:
         "llm_action", rclcpp::QoS(10),
         [this](const std_msgs::msg::String::SharedPtr msg) {
           llm_action_ = msg->data;
+          // Keep the blackboard FRESH even while the tree is parked in the
+          // AiYield Wait branch: the AiPath Sequence only re-ticks
+          // CheckLlmAction when its running child restarts, so a late
+          // "proceed" (e.g. the deterministic yield release) was ignored for
+          // up to the whole AiYieldMax window (run_2026-08-24_14-22-59:
+          // proceed published at 46.6s, robot resumed only at 48.8s).
+          // Blackboard::set is mutex-protected in BT.CPP v3, so writing from
+          // this spin thread is safe.
+          config().blackboard->set("llm_action", msg->data);
         });
       sub_reason_ = local_node_->create_subscription<std_msgs::msg::String>(
         "llm_reason", rclcpp::QoS(10),
         [this](const std_msgs::msg::String::SharedPtr msg) {
           llm_reason_ = msg->data;
+          config().blackboard->set("llm_reason", msg->data);
         });
       executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
       executor_->add_node(local_node_);

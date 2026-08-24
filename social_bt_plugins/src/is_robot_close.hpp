@@ -60,9 +60,10 @@ public:
     yielding_(false), suppressing_(false), avoiding_(false),
     yield_started_s_(0.0), suppress_until_s_(0.0), clear_since_s_(0.0),
     avoid_until_s_(0.0),
-    block_angle_deg_(20.0), side_cone_deg_(20.0), dca_margin_(0.6),
-    yield_max_s_(10.0), cooldown_s_(8.0), release_debounce_s_(1.5),
-    hold_cone_deg_(45.0), avoid_window_s_(4.5)
+    block_angle_deg_(30.0), head_on_deg_(10.0), side_cone_deg_(20.0),
+    row_cone_deg_(10.0), dca_margin_(0.6),
+    yield_max_s_(6.0), cooldown_s_(8.0), release_debounce_s_(1.5),
+    hold_cone_deg_(40.0), avoid_window_s_(4.5)
   {
     rclcpp::Node::SharedPtr node;
     if (config().blackboard->get("node", node) && node) {
@@ -139,14 +140,27 @@ public:
     //              give-way; yield if the other is FASTER than us, or if it is
     //              on OUR RIGHT (right-hand traffic).
     //   robot_angle sign: + = LEFT, - = RIGHT.
+    // TRUE head-on (opposite headings): both rovers arc "away" and diverge.
+    // Offset/near-head-on crossings must NOT both arc — their "away" arcs can
+    // CONVERGE and collide (run_2026-08-24_12-57-56).  They are resolved by
+    // RIGHT-OF-WAY (right-hand traffic) instead.
     const bool head_on =
-      robot_close_ &&
-      std::abs(robot_angle_) <= block_angle_deg_;
+      robot_close_ && std::abs(robot_angle_) <= head_on_deg_;
     const bool side_conflict =
       robot_close_ && robot_dca_ <= dca_margin_;
     const bool on_our_right = robot_angle_ < -side_cone_deg_;
+    // RIGHT-OF-WAY (right-hand traffic): "the robot standing on the LEFT
+    // yields; the robot standing on the RIGHT has the way."  Locally: if the
+    // OTHER robot is on OUR right, WE are the left-standing one -> WE yield.
+    // If the other is on OUR left, WE have the way -> proceed (no yield).
+    const bool row_other_right = robot_angle_ < -row_cone_deg_;
+    const bool row_yield =
+      robot_close_ &&
+      std::abs(robot_angle_) <= block_angle_deg_ &&
+      row_other_right;
     const bool trigger =
-      head_on || (side_conflict && (robot_faster_ || on_our_right));
+      head_on || row_yield ||
+      (side_conflict && (robot_faster_ || on_our_right));
 
     // HOLD: for side-conflict yields — stay stopped until the other robot has
     // ACTUALLY passed (bearing beyond the hold cone) or left close range.
@@ -272,19 +286,21 @@ private:
   bool robot_faster_;
   bool yielding_;
   bool suppressing_;
-  bool avoiding_;                 // head-on avoidance maneuver in progress
+  bool avoiding_;                 
   double yield_started_s_;
   double suppress_until_s_;
   double clear_since_s_;
   double avoid_until_s_;
   double block_angle_deg_;
+  double head_on_deg_;
   double side_cone_deg_;
+  double row_cone_deg_;
   double dca_margin_;
   double yield_max_s_;
   double cooldown_s_;
   double release_debounce_s_;
   double hold_cone_deg_;
-  double avoid_window_s_;         // s the head-on arc branch stays active
+  double avoid_window_s_;        
 };
 
 }  // namespace social_bt

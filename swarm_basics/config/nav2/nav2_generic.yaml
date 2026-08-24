@@ -9,7 +9,7 @@
     # ---- Planner ----
     planner_plugins: ["GridBased"]
     GridBased.plugin: "nav2_navfn_planner/NavfnPlanner"
-    GridBased.tolerance: 2.0
+    GridBased.tolerance: 0.5
     GridBased.use_astar: True
     GridBased.allow_unknown: True
 
@@ -164,5 +164,5 @@ local_costmap:
           obstacle_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.35
+        cost_scaling_factor: 2.0
+        inflation_radius: 0.7
