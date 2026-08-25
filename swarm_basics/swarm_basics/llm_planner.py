@@ -59,6 +59,7 @@ A robot BESIDE or BEHIND you (bearing magnitude > 60 deg) has ALREADY passed —
 RIGHT-OF-WAY IS LOCKED FOR THE WHOLE ENCOUNTER (right-hand traffic: the robot on the LEFT yields, the robot on the RIGHT has the way). The situation report tells you once, at first contact, whether YOU are the YIELDING robot or HAVE the right-of-way — follow it and do NOT change your mind mid-pass. If you HAVE the way: NEVER yield, even if the other robot is crossing, faster, or seems to be on your right as it passes. If you are YIELDING: stop and let it pass, then resume once it is clearly past (bearing > 60 deg).
 STALL ESCAPE: ONLY the YIELDING robot may break a stuck pass. If you are the YIELDING robot and the other robot is nearly stationary (speed < 0.1 m/s) directly ahead for 3+ seconds, the pass is STUCK — stop yielding and choose "arc_left"/"arc_right" to drive around it (prefer the side with more free space). If you HAVE the right-of-way, NEVER escape on your own — keep your path; the yielding robot will move aside (the recovery layer handles it if it never does).
 Use the motion/free-space hints: if a human is approaching (range rate negative) but still >1.5 m away, "slow" is often better than a full stop. A human reported "not close (>1.5 m)" is NOT a hard conflict — prefer "proceed" or "slow", not "yield".
+A human that is STANDING STILL (range rate ~0) and OFF TO THE SIDE (bearing magnitude > 10 deg) is NOT a hard conflict — after a short observation the robot drives past it at reduced speed. Only yield to a human that is dead ahead or actively crossing your path.
 Respond with a single JSON object, no markdown, no extra text: {"action": "proceed|yield|slow|arc_left|arc_right|stop", "reason": "short reason"}"""
 
 
@@ -144,6 +145,20 @@ class LlmPlanner(Node):
         # slammed to a stop at 2.2 m separation).  The full stop commits only
         # at the yield point.
         self._yield_stop_dist = 1.75
+        # Human slowdown range (matches velocity_adaptor d_slow): beyond this
+        # the human is not a conflict; within it AND approaching -> hold.
+        self._human_slow_dist = 2.5
+        # Human pass-around (short wait, then drive around instead of a long
+        # yield): a STATIONARY human off to the side (|bearing| > min_deg) is
+        # not a hard conflict — after a brief grace wait we choose "slow" and
+        # let Nav2's DWB curve around it, instead of holding until it leaves
+        # the corridor.  Never pass a human still approaching our path (range
+        # rate < -0.05) or with too little lateral room to slip by.
+        self._human_pass_min_deg = 10.0   # |bearing| must exceed this (deg)
+        self._human_pass_max_deg = 85.0   # beyond this we are beside/behind
+        self._human_pass_wait = 1.5       # s of "stationary off to the side"
+        self._human_pass_lat = 0.4        # min lateral gap to slip by (m)
+        self._human_pass_since = 0.0      # when the pass candidate appeared
         # Right-of-way tie-break: bearings in this frontal band (other robot
         # ahead, slightly to our left) are an ambiguous oblique approach —
         # commit "headon" (both arc) instead of "way", so two robots that BOTH
@@ -223,7 +238,10 @@ class LlmPlanner(Node):
     def _cb_robot_faster(self, m): self._robot_faster = bool(m.data)
     def _cb_robot_dist(self, m): self._robot_dist = float(m.data)
     def _cb_robot_id(self, m): self._robot_id = m.data
-    def _cb_human_det(self, m): self._human_det = bool(m.data)
+    def _cb_human_det(self, m):
+        self._human_det = bool(m.data)
+        if not self._human_det:
+            self._human_pass_since = 0.0   # restart the short wait next time
     def _cb_human_close(self, m): self._human_close = bool(m.data)
     def _cb_human_dist(self, m):
         self._human_dist = float(m.data)
@@ -389,13 +407,48 @@ class LlmPlanner(Node):
         if not self._human_det:
             if self._human_gone_since == 0.0:
                 self._human_gone_since = time.time()
-            return time.time() - self._human_gone_since >= 1.5
+            return time.time() - self._human_gone_since >= 1.0
         self._human_gone_since = 0.0
         if abs(self._human_angle) > 90.0:
             return True                       # human behind us
-        lat = self._human_dist * math.sin(math.radians(self._human_angle))
         rr, _ = self._human_motion()
+        # Slowdown-range + approach gate: a human beyond the slowdown range or
+        # not actually closing is NOT a conflict (run_2026-08-25_13-33-27: a
+        # standing human ~3.6 m away, mis-measured at 1.94 m by noisy depth,
+        # froze the rover at spawn for 38 s).  Only hold when it is close
+        # (human_close <= 1.5 m) or genuinely approaching within the range.
+        if (not self._human_close and
+                (self._human_dist > self._human_slow_dist or rr >= -0.05)):
+            return True
+        lat = self._human_dist * math.sin(math.radians(self._human_angle))
         return abs(lat) > 1.2 and rr > -0.1
+
+    def _human_passable(self):
+        """Can we drive AROUND this human instead of holding?
+
+        True only when the human is (a) off to the side (bearing outside the
+        dead-ahead cone but not yet beside/behind), (b) NOT actively closing
+        on our path (stationary or moving away — never cut in front of a
+        crossing human), (c) leaving enough lateral room to slip past, and
+        (d) has been in that state for the short grace wait.  Returns False
+        (and resets the wait) the moment any gate fails, so a stationary
+        human that briefly moves back toward us goes back to a proper yield.
+        """
+        a = abs(self._human_angle)
+        if a < self._human_pass_min_deg or a > self._human_pass_max_deg:
+            self._human_pass_since = 0.0
+            return False
+        rr, _ = self._human_motion()
+        if rr < -0.05:
+            self._human_pass_since = 0.0
+            return False
+        lat = self._human_dist * math.sin(math.radians(self._human_angle))
+        if lat < self._human_pass_lat:
+            self._human_pass_since = 0.0
+            return False
+        if self._human_pass_since == 0.0:
+            self._human_pass_since = time.time()
+        return time.time() - self._human_pass_since >= self._human_pass_wait
 
     # --- event-driven tick -------------------------------------------------
     def _signature(self):
@@ -441,11 +494,13 @@ class LlmPlanner(Node):
                     self._last_action = "yield"
                     self._last_reason = "yield — stopped at the yield point"
                     self._publish()
-        # HUMAN deterministic hold/release (every tick — the LLM alone dithers
-        # in 'slow' with no resolution and the robot froze on the human's
-        # walking line, run_2026-08-24_16-13-56).  Humans always have
+        # HUMAN deterministic hold/pass/release (every tick — the LLM alone
+        # dithers in 'slow' with no resolution and the robot froze on the
+        # human's walking line, run_2026-08-24_16-13-56).  Humans always have
         # priority: while one is still in the corridor ahead, hold; once it is
         # clearly out of the way (any geometry — see _human_cleared), resume.
+        # NEW: a STATIONARY human off to the side (> _human_pass_min_deg) is
+        # passed around after a short grace wait instead of a long yield.
         # Skipped during an active robot yield (the robot logic owns that).
         if self._human_det and self._row != "yield":
             if self._human_cleared():
@@ -453,6 +508,12 @@ class LlmPlanner(Node):
                     self._last_action = "proceed"
                     self._last_reason = ("human has cleared — resuming "
                                          "(deterministic release)")
+                    self._publish()
+            elif self._human_passable():
+                if self._last_action != "slow":
+                    self._last_action = "slow"
+                    self._last_reason = ("human stationary off to the side — "
+                                         "passing around it")
                     self._publish()
             else:
                 if (self._human_dist > self._yield_stop_dist and
@@ -637,13 +698,19 @@ class LlmPlanner(Node):
         # run_2026-08-24_16-13-56: five identical 'slow — human approaching
         # but not close yet' with no resolution froze the robot on the human's
         # walking line).  Human has priority: hold while it blocks, resume the
-        # moment it has cleared.  Skipped during an active robot yield.
+        # moment it has cleared.  A stationary human off to the side is passed
+        # around after a short wait (see _human_passable) instead of a long
+        # yield.  Skipped during an active robot yield.
         if self._human_det and self._row != "yield":
             if self._human_cleared():
                 if action in ("slow", "yield"):
                     action = "proceed"
                     reason = ("human has cleared — resuming "
                               "(deterministic release)")
+            elif self._human_passable():
+                action = "slow"
+                reason = ("human stationary off to the side — "
+                          "passing around it")
             else:
                 if self._human_dist > self._yield_stop_dist and \
                         self._own_speed > 0.05:

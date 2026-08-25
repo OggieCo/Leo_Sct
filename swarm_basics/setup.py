@@ -12,7 +12,6 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', ['launch/spawn_multi_robots.launch.py']),
         ('share/' + package_name + '/launch', ['launch/leo_gz.launch.py']),
-        ('share/' + package_name + '/config/nav2', ['config/nav2/robot_0_nav2.yaml']),
         ('share/' + package_name + '/config/nav2', ['config/nav2/corridor_map.yaml']),
         ('share/' + package_name + '/config/nav2', ['config/nav2/corridor_map.pgm']),
 

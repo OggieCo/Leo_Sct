@@ -41,7 +41,7 @@ class VelocityAdaptor(Node):
         self.ns = self.get_namespace().strip('/') or 'root'
 
         self.declare_parameter('d_stop', 0.4)         # m  -> scale 0
-        self.declare_parameter('d_slow', 3.5)         # m  -> start slowing (earlier)
+        self.declare_parameter('d_slow', 2.5)         # m  -> start slowing
         self.declare_parameter('rate_max', 60.0)      # deg/s -> min factor
         self.declare_parameter('rate_min_factor', 0.15)
 

@@ -3,9 +3,18 @@ import math
 WORLD_NAME = "human_world"
 
 ROBOT_POSITIONS = [
-    # offset head-on / "both-way" (active): parallel lines 0.6 m apart, each
-    # robot sees the other on its LEFT at first contact (+~14 deg) -> both used
-    # to commit "way" and collide.  Now both commit "headon" and arc.
+    # === RANDOM-GOALS WANDER (active) ===
+    # Start positions for random_goals_all.launch.py: well-separated so the
+    # rovers begin apart, then roam the full +/-6.5 m arena sending random
+    # goals (random_goals.py) — including the +/-6..7 edge bands.  Use
+    # together with the humans in human_world.sdf.
+    ("robot_0",  0.0,  3.0, 4.7124),     # north,   facing south
+    ("robot_1", -3.0, -3.0, 0.0),        # southwest, facing east
+
+    # --- scripted scenarios (activate by uncommenting one block) ---
+
+    # offset head-on / "both-way": parallel lines 0.6 m apart, each robot sees
+    # the other on its LEFT at first contact (+~14 deg) -> both arc.
     #("robot_0", -2.5, -0.3, 0.0),        # east  along y=-0.3
     #("robot_1",  2.5,  0.3, 3.1416),     # west  along y=+0.3
 
@@ -18,8 +27,8 @@ ROBOT_POSITIONS = [
     #("robot_1", -2.12, -2.12, 0.7854),
 
     # head-on
-    ("robot_0",  0, 2.5, 4.7124),
-    ("robot_1",  0, -2.5, 1.5708),
+    #("robot_0",  0, 2.5, 4.7124),
+    #("robot_1",  0, -2.5, 1.5708),
 
     # human (robot_0 only)
     #("robot_0",  0.0,  3.0, 4.7124),

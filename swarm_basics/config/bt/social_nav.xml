@@ -101,7 +101,7 @@
           <!-- NO in-place Spin: real rovers have adhesive-taped wheels and
                cannot rotate in place.  Recovery = clear + wait + backup only. -->
           <Wait wait_duration="5"/>
-          <BackUp backup_dist="0.30" backup_speed="0.05"/>
+          <BackUp backup_dist="0.6" backup_speed="0.5"/>
         </RoundRobin>
       </ReactiveFallback>
     </RecoveryNode>

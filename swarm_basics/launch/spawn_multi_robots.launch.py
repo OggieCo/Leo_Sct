@@ -4,7 +4,9 @@ import xacro
 from launch import LaunchDescription
 from launch.actions import OpaqueFunction
 from launch.actions import DeclareLaunchArgument
+from launch.actions import SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
+from launch.substitutions import PythonExpression
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
@@ -53,6 +55,18 @@ def generate_launch_description():
 
     detector = LaunchConfiguration('detector')
     enable_llm = LaunchConfiguration('enable_llm')
+
+    # Route run logs into BT_LLM/ (LLM enabled) vs BT/ (no LLM):
+    # run_utils.get_run_dir() reads SWARM_RUN_MODE so coverage_plotter,
+    # social_event_logger and llm_planner all write into the same subfolder.
+    run_mode_env = SetEnvironmentVariable(
+        'SWARM_RUN_MODE',
+        PythonExpression([
+            "'BT_LLM' if '",
+            enable_llm,
+            "'.lower() == 'true' else 'BT'",
+        ]),
+    )
 
     # --- Function to create all robot nodes ---
     def create_all_robot_nodes(context, robots):
@@ -286,6 +300,7 @@ def generate_launch_description():
     return LaunchDescription([
         detector_arg,
         enable_llm_arg,
+        run_mode_env,
         plot_node,
         social_logger_node,
         OpaqueFunction(function=lambda context: create_all_robot_nodes(context, robots_to_spawn))

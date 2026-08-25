@@ -92,10 +92,18 @@
     - social_bt_plugins
 
     # ---- Behavior Server ----
+    # The bt_navigator also loads Nav2's DEFAULT navigate_through_poses tree
+    # (which contains a Spin node), so the spin action server MUST stay
+    # available or the tree fails to load.  Our custom ai/social trees never
+    # call Spin (recovery = clear + wait + backup), so no in-place rotation
+    # happens in practice.  The backup tuning below covers the behavior-server
+    # path; our trees use their own BackUp node (see the BT xmls).
     cycle_frequency: 10.0
     behavior_plugins: ["spin", "backup", "wait", "drive_on_heading", "assisted_teleop"]
     spin.plugin: "nav2_behaviors/Spin"
     backup.plugin: "nav2_behaviors/BackUp"
+    backup.backup_velocity: 0.5
+    backup.backup_distance: 0.6
     wait.plugin: "nav2_behaviors/Wait"
     drive_on_heading.plugin: "nav2_behaviors/DriveOnHeading"
     assisted_teleop.plugin: "nav2_behaviors/AssistedTeleop"
