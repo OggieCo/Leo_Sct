@@ -109,7 +109,12 @@ public:
       std::string direction = "left";
       bool adaptive = false;
       double robot_radius = 0.25, clearance = 0.35;
-      double min_arc = 0.35, max_arc = 1.0, min_r = 0.6, max_r = 1.4;
+      // Wide, smooth arcs only (run_2026-08-27_17-49-23: a 0.6 m radius
+      // looked like an in-place spin on the adhesive-wheel rovers).  The
+      // radius is never below 1.2 m and the turn is capped at 1.2 rad, which
+      // still yields >= 0.76 m lateral per rover at full urgency
+      // (r*(1-cos(theta)) = 1.2*(1-cos(1.2))).
+      double min_arc = 0.5, max_arc = 1.2, min_r = 1.2, max_r = 2.0;
       getInput("arc_angle", arc_angle);
       getInput("speed", speed);
       getInput("radius", radius);
@@ -233,10 +238,16 @@ public:
         "size the arc to the other rover (distance/bearing/size)"),
       BT::InputPort<double>("robot_radius", 0.25, "other rover half-width (m)"),
       BT::InputPort<double>("clearance", 0.35, "lateral gap to keep (m)"),
-      BT::InputPort<double>("min_arc_angle", 0.35, "min turn angle (rad)"),
-      BT::InputPort<double>("max_arc_angle", 1.0, "max turn angle (rad)"),
-      BT::InputPort<double>("min_radius", 0.6, "min arc radius (m)"),
-      BT::InputPort<double>("max_radius", 1.4, "max arc radius (m)"),
+      // Wide, smooth arcs only — these PORT DEFAULTS are what tick()
+      // actually uses (getInput() returns the port default when the tree
+      // does not pass the port, silently overriding the local defaults).
+      // Keep in sync with the local defaults in tick().
+      // (run_2026-08-27_17-49-23: a 0.6 m radius looked like an in-place
+      // spin on the adhesive-wheel rovers.)
+      BT::InputPort<double>("min_arc_angle", 0.5, "min turn angle (rad)"),
+      BT::InputPort<double>("max_arc_angle", 1.2, "max turn angle (rad)"),
+      BT::InputPort<double>("min_radius", 1.2, "min arc radius (m)"),
+      BT::InputPort<double>("max_radius", 2.0, "max arc radius (m)"),
     };
   }
 

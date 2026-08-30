@@ -16,6 +16,7 @@
     arc_left   -> smooth left curved detour (turn while driving, no spin)
     arc_right  -> smooth right curved detour
     stop       -> emergency 5 s wait
+    back       -> reverse straight back (BackUp) to separate when too close
 
   If llm_action is empty (no planner) or unknown, every branch FAILS and
   the reactive HumanAwareFollow safety net takes over.
@@ -74,6 +75,18 @@
                 <Sequence name="AiStop">
                   <BlackboardCheckString value_A="{llm_action}" value_B="stop" return_on_mismatch="FAILURE">
                     <Wait wait_duration="5"/>
+                  </BlackboardCheckString>
+                </Sequence>
+                <Sequence name="AiBack">
+                  <BlackboardCheckString value_A="{llm_action}" value_B="back" return_on_mismatch="FAILURE">
+                    <!-- Lidar rear gate: never reverse into something (wall /
+                         human / rover).  ReactiveSequence re-checks it every
+                         tick, so if an obstacle appears behind mid-backup the
+                         maneuver halts immediately. -->
+                    <ReactiveSequence name="AiBackManeuver">
+                      <IsRearClear/>
+                      <BackUp backup_dist="0.6" backup_speed="0.3"/>
+                    </ReactiveSequence>
                   </BlackboardCheckString>
                 </Sequence>
                 <Sequence name="AiProceed">

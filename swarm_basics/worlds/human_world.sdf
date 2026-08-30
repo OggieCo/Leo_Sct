@@ -155,11 +155,11 @@
       </link>
       <static>true</static>
     </model>
-    <!-- HUMANS ACTIVE (2026-08-25): populated scene for the random-goals
-         wander — 3 actors (was 4; the extra one gridlocked the scene),
-         different paths / speeds / start delays, all in the central +/-3 m
-         zone where the rovers roam.  Gazebo actors are scripted (not truly
-         random), so this is a varied, desynced mix. -->
+    <!-- HUMANS ACTIVE (2026-08-29): populated scene for the fixed-goals
+         A/B — 3 actors, SPREAD OUT lanes (center y=0, top y=4, left x=-5)
+         so they no longer cluster in the +/-3 m box, and NO fast walker
+         (max 0.5 m/s; slow 0.25 + medium 0.5).  Gazebo actors are scripted
+         (not truly random), so this is a varied, desynced mix. -->
     <actor name="human_1">
       <skin>
         <filename>/usr/share/gazebo-11/media/models/walk.dae</filename>
@@ -175,12 +175,12 @@
         <delay_start>1.0</delay_start>
         <auto_start>true</auto_start>
         <trajectory id="0" type="LINEAR">
-          <waypoint><time>0</time><pose>-3.0 0.0 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>5</time><pose>-3.0 0.0 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>17</time><pose>3.0 0.0 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>22</time><pose>3.0 0.0 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>34</time><pose>-3.0 0.0 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>39</time><pose>-3.0 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>0</time><pose>-3.5 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>5</time><pose>-3.5 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>19</time><pose>3.5 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>24</time><pose>3.5 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>38</time><pose>-3.5 0.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>43</time><pose>-3.5 0.0 1.0 0 0 0</pose></waypoint>
         </trajectory>
       </script>
     </actor>
@@ -228,12 +228,12 @@
         <delay_start>11.0</delay_start>
         <auto_start>true</auto_start>
         <trajectory id="0" type="LINEAR">
-          <waypoint><time>0</time><pose>-2.5 1.5 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>6</time><pose>-2.5 1.5 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>26</time><pose>2.5 1.5 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>32</time><pose>2.5 1.5 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>52</time><pose>-2.5 1.5 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>58</time><pose>-2.5 1.5 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>0</time><pose>-3.0 4.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>6</time><pose>-3.0 4.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>30</time><pose>3.0 4.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>36</time><pose>3.0 4.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>60</time><pose>-3.0 4.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>66</time><pose>-3.0 4.0 1.0 0 0 0</pose></waypoint>
         </trajectory>
       </script>
     </actor>
@@ -253,12 +253,12 @@
         <delay_start>16.0</delay_start>
         <auto_start>true</auto_start>
         <trajectory id="0" type="LINEAR">
-          <waypoint><time>0</time><pose>-1.5 -2.5 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>3</time><pose>-1.5 -2.5 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>6.33</time><pose>-1.5 2.5 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>9.33</time><pose>-1.5 2.5 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>12.67</time><pose>-1.5 -2.5 1.0 0 0 0</pose></waypoint>
-          <waypoint><time>15.67</time><pose>-1.5 -2.5 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>0</time><pose>-5.0 -3.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>4</time><pose>-5.0 -3.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>16</time><pose>-5.0 3.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>20</time><pose>-5.0 3.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>32</time><pose>-5.0 -3.0 1.0 0 0 0</pose></waypoint>
+          <waypoint><time>36</time><pose>-5.0 -3.0 1.0 0 0 0</pose></waypoint>
         </trajectory>
       </script>
     </actor>

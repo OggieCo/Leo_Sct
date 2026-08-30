@@ -9,6 +9,7 @@ import matplotlib
 # running inside the container.  Render offscreen + save PNG instead.
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from PIL import Image
 from matplotlib.patches import Rectangle
 from collections import defaultdict
 import csv
@@ -200,6 +201,53 @@ class CoveragePlotter(Node):
             ])
             self.events_file.flush()
 
+    def _save_png(self, path, dpi=None):
+        """Save the figure as a PNG, then strip the alpha channel (RGBA->RGB).
+
+        matplotlib always writes RGBA PNGs; VS Code's built-in image preview can
+        fail to render those.  Browsers are fine either way, so convert to RGB
+        to guarantee the coverage grid is visible everywhere.
+        """
+        self.fig.savefig(path, dpi=dpi)
+        im = Image.open(path).convert('RGB')
+        im.save(path)
+
+    def _write_coverage_final_csv(self):
+        """Write the full 14x14 visited-grid to coverage_final.csv."""
+        grid_path = self.csv_dir / 'coverage_final.csv'
+        with open(grid_path, 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['cell_x', 'cell_y', 'visited'])
+            for idx, (cx, cy) in enumerate(self.cells):
+                w.writerow([cx, cy, 1 if idx in self.visited else 0])
+
+    def _write_summary_csv(self):
+        """Write current coverage/path/bump stats to summary.csv."""
+        summary_path = self.csv_dir / 'summary.csv'
+        visited = len(self.visited)
+        total = len(self.cells)
+        pct = (visited / total) * 100 if total > 0 else 0.0
+        duration = (self.get_clock().now() - self.ros_start_time).nanoseconds / 1e9
+        with open(summary_path, 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['metric', 'value'])
+            w.writerow(['total_robots', len(self.trajectories)])
+            w.writerow(['duration_sec', f'{duration:.1f}'])
+            w.writerow(['total_cells', total])
+            w.writerow(['visited_cells', visited])
+            w.writerow(['coverage_pct', f'{pct:.2f}'])
+            total_path = sum(self.cumulative_path_length.values())
+            w.writerow(['total_path_length_m', f'{total_path:.2f}'])
+            all_bumps = sum(self.total_bumps.values())
+            w.writerow(['total_bumps', all_bumps])
+            for ns in self.trajectories:
+                pts = len(self.trajectories[ns])
+                dist = self.cumulative_path_length[ns]
+                bumps = self.total_bumps.get(ns, 0)
+                w.writerow([f'{ns}_path_points', pts])
+                w.writerow([f'{ns}_path_length_m', f'{dist:.2f}'])
+                w.writerow([f'{ns}_bumps', bumps])
+
     def update_plot(self):
         """Redraw robot trajectories and visited cells."""
         self.ax.clear()
@@ -239,8 +287,13 @@ class CoveragePlotter(Node):
         now = self.get_clock().now().nanoseconds / 1e9
         if now - self._last_save > 2.0:
             self._last_save = now
-            self.fig.savefig(self.save_path)
-            self.fig.savefig(self.csv_dir / 'coverage_map.png', dpi=150)
+            self._save_png(self.save_path)
+            self._save_png(self.csv_dir / 'coverage_map.png', dpi=150)
+            # Refresh summary/coverage CSVs alongside the PNG every 2s so an
+            # interrupted run (Ctrl-C, plotter crash on shutdown) never loses
+            # these files.
+            self._write_coverage_final_csv()
+            self._write_summary_csv()
 
     def save_final_plot(self):
         """Save final coverage plot."""
@@ -274,47 +327,21 @@ class CoveragePlotter(Node):
             bbox=dict(facecolor='white', alpha=0.6, edgecolor='none')
         )
 
-        self.fig.savefig(self.save_path)
-        self.fig.savefig(self.csv_dir / 'coverage_map.png', dpi=150)
+        self._save_png(self.save_path)
+        self._save_png(self.csv_dir / 'coverage_map.png', dpi=150)
 
-        # --- CSV: save final coverage grid ---
-        grid_path = self.csv_dir / 'coverage_final.csv'
-        with open(grid_path, 'w', newline='') as f:
-            w = csv.writer(f)
-            w.writerow(['cell_x', 'cell_y', 'visited'])
-            for idx, (cx, cy) in enumerate(self.cells):
-                w.writerow([cx, cy, 1 if idx in self.visited else 0])
-
-        # --- CSV: save summary ---
-        summary_path = self.csv_dir / 'summary.csv'
-        visited = len(self.visited)
-        total = len(self.cells)
-        pct = (visited / total) * 100 if total > 0 else 0.0
-        duration = (self.get_clock().now() - self.ros_start_time).nanoseconds / 1e9
-        with open(summary_path, 'w', newline='') as f:
-            w = csv.writer(f)
-            w.writerow(['metric', 'value'])
-            w.writerow(['total_robots', len(self.trajectories)])
-            w.writerow(['duration_sec', f'{duration:.1f}'])
-            w.writerow(['total_cells', total])
-            w.writerow(['visited_cells', visited])
-            w.writerow(['coverage_pct', f'{pct:.2f}'])
-            total_path = sum(self.cumulative_path_length.values())
-            w.writerow(['total_path_length_m', f'{total_path:.2f}'])
-            all_bumps = sum(self.total_bumps.values())
-            w.writerow(['total_bumps', all_bumps])
-            for ns in self.trajectories:
-                pts = len(self.trajectories[ns])
-                dist = self.cumulative_path_length[ns]
-                bumps = self.total_bumps.get(ns, 0)
-                w.writerow([f'{ns}_path_points', pts])
-                w.writerow([f'{ns}_path_length_m', f'{dist:.2f}'])
-                w.writerow([f'{ns}_bumps', bumps])
+        # --- CSV: final coverage grid + summary (already kept fresh by the
+        # periodic save, this is the last write) ---
+        self._write_coverage_final_csv()
+        self._write_summary_csv()
 
         # --- close open CSV files ---
         self.traj_file.close()
         self.events_file.close()
 
+        visited = len(self.visited)
+        total = len(self.cells)
+        pct = (visited / total) * 100 if total > 0 else 0.0
         self.get_logger().info(
             f"Final plot saved. {visited}/{total} cells visited ({pct:.1f}%). "
             f"CSVs in {self.csv_dir}"

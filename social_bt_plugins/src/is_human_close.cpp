@@ -11,6 +11,7 @@
 #include <thread>
 
 #include "is_robot_close.hpp"
+#include "is_rear_clear.hpp"
 #include "arc.hpp"
 #include "check_llm_action.hpp"
 
@@ -214,4 +215,5 @@ BT_REGISTER_NODES(factory)
   factory.registerNodeType<social_bt::IsRobotClose>("IsRobotClose");
   factory.registerNodeType<social_bt::Arc>("Arc");
   factory.registerNodeType<social_bt::CheckLlmAction>("CheckLlmAction");
+  factory.registerNodeType<social_bt::IsRearClear>("IsRearClear");
 }

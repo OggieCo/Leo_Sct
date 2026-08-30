@@ -28,7 +28,11 @@
     general_goal_checker.plugin: "nav2_controller::SimpleGoalChecker"
     general_goal_checker.stateful: True
     general_goal_checker.xy_goal_tolerance: 0.25
-    general_goal_checker.yaw_goal_tolerance: 0.25
+    # Goals are sent with the rover's CURRENT heading (fixed_goals.py), and we
+    # never need a final orientation: a tight yaw tolerance makes DWB's
+    # RotateToGoal critic spin the rover in place at every goal (adhesive
+    # wheels cannot zero-turn).  pi means any yaw passes -> no end-of-goal spin.
+    general_goal_checker.yaw_goal_tolerance: 3.14159
     FollowPath.plugin: "dwb_core::DWBLocalPlanner"
     FollowPath.debug_trajectory_details: True
     FollowPath.min_vel_x: 0.0

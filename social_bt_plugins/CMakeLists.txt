@@ -11,6 +11,7 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(behaviortree_cpp_v3 REQUIRED)
 
 # ---- custom BT plugins (loaded by nav2 bt_navigator via plugin_lib_names) ----
@@ -27,6 +28,7 @@ ament_target_dependencies(social_bt_plugins
   std_msgs
   nav_msgs
   geometry_msgs
+  sensor_msgs
   behaviortree_cpp_v3
 )
 

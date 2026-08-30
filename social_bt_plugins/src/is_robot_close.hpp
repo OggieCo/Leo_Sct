@@ -57,7 +57,7 @@ public:
   IsRobotClose(const std::string & name, const BT::NodeConfiguration & conf)
   : BT::ConditionNode(name, conf),
     robot_close_(false), robot_angle_(0.0), robot_dca_(100.0),
-    robot_opposition_deg_(180.0), robot_faster_(false),
+    robot_dist_(100.0), robot_opposition_deg_(180.0), robot_faster_(false),
     yielding_(false), suppressing_(false), avoiding_(false),
     yield_started_s_(0.0), suppress_until_s_(0.0), clear_since_s_(0.0),
     avoid_until_s_(0.0),
@@ -69,7 +69,7 @@ public:
     block_angle_deg_(30.0), head_on_deg_(45.0), head_opp_deg_(30.0),
     side_cone_deg_(20.0), row_cone_deg_(10.0), dca_margin_(0.6),
     yield_max_s_(6.0), cooldown_s_(8.0), release_debounce_s_(1.5),
-    hold_cone_deg_(40.0), avoid_window_s_(4.5)
+    hold_cone_deg_(40.0), avoid_window_s_(4.5), back_dist_(1.2)
   {
     rclcpp::Node::SharedPtr node;
     if (config().blackboard->get("node", node) && node) {
@@ -101,6 +101,14 @@ public:
         "robot_faster", rclcpp::QoS(10),
         [this](const std_msgs::msg::Bool::SharedPtr msg) {
           robot_faster_ = msg->data;
+        });
+      // distance to the nearest other rover (m) — used to suppress/abort the
+      // atomic arc when the rovers are too close to turn safely (the LLM
+      // "back" action or the reactive yield creates separation instead).
+      sub_rdist_ = local_node_->create_subscription<std_msgs::msg::Float32>(
+        "nearest_robot_dist", rclcpp::QoS(10),
+        [this](const std_msgs::msg::Float32::SharedPtr msg) {
+          robot_dist_ = msg->data;
         });
       event_pub_ = local_node_->create_publisher<std_msgs::msg::String>(
         "bt_social_event", 10);
@@ -208,7 +216,10 @@ public:
     // the atomic arc branch for avoid_window_s_ (covers the ~3.3 s arc + a
     // little follow), then release so the tree resumes normal navigation, and
     // cool down before any re-arc.
-    if (head_on && !suppressing_ && !avoiding_) {
+    // Only arm the atomic arc when there is room to turn: below back_dist_
+    // an arc can swing into the other rover — release to the LLM "back"
+    // action (or the reactive yield) for close-range separation instead.
+    if (head_on && !suppressing_ && !avoiding_ && robot_dist_ > back_dist_) {
       avoiding_ = true;
       avoid_until_s_ = now + avoid_window_s_;
       publish_event("ROBOT_AVOID_START");
@@ -217,6 +228,17 @@ public:
       // reactive tree (social_nav.xml) consumes {just_yielded} for its own
       // ArcOrFollow.  Setting both keeps the shared node tree-agnostic.
       config().blackboard->set("just_yielded", true);
+    }
+    // Abort the atomic arc if the rovers get dangerously close mid-maneuver:
+    // turning at close range converges into a collision — stop arcing and
+    // let the LLM "back" (or the reactive yield) create separation instead.
+    if (avoiding_ && robot_dist_ <= back_dist_) {
+      avoiding_ = false;
+      suppressing_ = true;
+      suppress_until_s_ = now + cooldown_s_;
+      publish_event("ROBOT_AVOID_END_ABORT");
+      config().blackboard->set("robot_avoid", false);
+      config().blackboard->set("just_yielded", false);
     }
     if (avoiding_ && now >= avoid_until_s_) {
       avoiding_ = false;
@@ -320,6 +342,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_dca_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_opp_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_faster_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_rdist_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr event_pub_;
   rclcpp::Node::SharedPtr local_node_;
   rclcpp::executors::SingleThreadedExecutor::SharedPtr executor_;
@@ -328,6 +351,7 @@ private:
   bool robot_close_;
   float robot_angle_;
   float robot_dca_;
+  float robot_dist_;
   float robot_opposition_deg_;
   bool robot_faster_;
   bool yielding_;
@@ -347,7 +371,8 @@ private:
   double cooldown_s_;
   double release_debounce_s_;
   double hold_cone_deg_;
-  double avoid_window_s_;        
+  double avoid_window_s_;
+  double back_dist_;             // m; arc suppressed/aborted below this
 };
 
 }  // namespace social_bt
