@@ -4,9 +4,10 @@ llm_planner.
 All nodes must write into the SAME per-run folder, inside a MODE subfolder:
   coverage_logs/BT_LLM/run_<timestamp>/  (LLM decision layer enabled)
   coverage_logs/BT/run_<timestamp>/      (pure reactive BT, no LLM)
+  coverage_logs/Nav2/run_<timestamp>/    (stock Nav2, no social layer)
 The mode comes from the SWARM_RUN_MODE env var set by the launch (the
-enable_llm arg), so LLM runs and pure-reactive runs are separated for the
-thesis A/B comparison.
+enable_llm arg, overridden to Nav2 by bt:=no), so the three conditions are
+separated for the thesis comparison.
 
 If each node computed its own timestamp independently they could start a
 second apart and create two folders (observed: run_..._14-21-41 vs
@@ -21,13 +22,13 @@ import time
 from pathlib import Path
 
 BASE_DIR = Path('/root/ros2_ws/src/results/coverage_logs')
-_MODES = ('BT_LLM', 'BT')
+_MODES = ('BT_LLM', 'BT', 'Nav2')
 # A run_ folder younger than this is considered "the current run".
 _RECENT_SECONDS = 5.0
 
 
 def _mode():
-    """BT_LLM or BT from the SWARM_RUN_MODE env var (default LLM)."""
+    """BT_LLM, BT or Nav2 from the SWARM_RUN_MODE env var (default LLM)."""
     mode = os.environ.get('SWARM_RUN_MODE', 'BT_LLM')
     return mode if mode in _MODES else 'BT_LLM'
 

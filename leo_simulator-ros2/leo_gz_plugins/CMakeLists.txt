@@ -10,6 +10,9 @@ find_package(ament_cmake REQUIRED)
 add_library(leo_gz_differential_plugin SHARED
 src/differential_system.cpp)
 
+add_library(leo_gz_bumpable_human_plugin SHARED
+src/bumpable_human_system.cpp)
+
 if(DEFINED ENV{GZ_VERSION} AND "$ENV{GZ_VERSION}" STREQUAL "garden")
   find_package(gz-plugin2 REQUIRED COMPONENTS register)
   set(GZ_PLUGIN_VER ${gz-plugin2_VERSION_MAJOR})
@@ -21,6 +24,10 @@ if(DEFINED ENV{GZ_VERSION} AND "$ENV{GZ_VERSION}" STREQUAL "garden")
     gz-sim${GZ_SIM_VER}::gz-sim${GZ_SIM_VER}
     gz-plugin${GZ_PLUGIN_VER}::gz-plugin${GZ_PLUGIN_VER}
   )
+  target_link_libraries(leo_gz_bumpable_human_plugin
+    gz-sim${GZ_SIM_VER}::gz-sim${GZ_SIM_VER}
+    gz-plugin${GZ_PLUGIN_VER}::gz-plugin${GZ_PLUGIN_VER}
+  )
 elseif(DEFINED ENV{GZ_VERSION} AND "$ENV{GZ_VERSION}" STREQUAL "harmonic")
   find_package(gz-plugin2 REQUIRED COMPONENTS register)
   set(GZ_PLUGIN_VER ${gz-plugin2_VERSION_MAJOR})
@@ -29,6 +36,10 @@ elseif(DEFINED ENV{GZ_VERSION} AND "$ENV{GZ_VERSION}" STREQUAL "harmonic")
   set(GZ_SIM_VER ${gz-sim8_VERSION_MAJOR})
 
   target_link_libraries(leo_gz_differential_plugin
+    gz-sim${GZ_SIM_VER}::gz-sim${GZ_SIM_VER}
+    gz-plugin${GZ_PLUGIN_VER}::gz-plugin${GZ_PLUGIN_VER}
+  )
+  target_link_libraries(leo_gz_bumpable_human_plugin
     gz-sim${GZ_SIM_VER}::gz-sim${GZ_SIM_VER}
     gz-plugin${GZ_PLUGIN_VER}::gz-plugin${GZ_PLUGIN_VER}
   )
@@ -48,13 +59,19 @@ else()
     ignition-gazebo${IGN_GAZEBO_VER}::ignition-gazebo${IGN_GAZEBO_VER}
     ignition-plugin${IGN_PLUGIN_VER}::ignition-plugin${IGN_PLUGIN_VER}
   )
+  target_link_libraries(leo_gz_bumpable_human_plugin
+    ignition-gazebo${IGN_GAZEBO_VER}::ignition-gazebo${IGN_GAZEBO_VER}
+    ignition-plugin${IGN_PLUGIN_VER}::ignition-plugin${IGN_PLUGIN_VER}
+  )
 endif()
 
 set_property(TARGET leo_gz_differential_plugin PROPERTY CXX_STANDARD 17)
+set_property(TARGET leo_gz_bumpable_human_plugin PROPERTY CXX_STANDARD 17)
 
 install(
   TARGETS
     leo_gz_differential_plugin
+    leo_gz_bumpable_human_plugin
   DESTINATION lib
 )
 

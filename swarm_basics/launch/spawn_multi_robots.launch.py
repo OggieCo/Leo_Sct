@@ -26,6 +26,13 @@ def generate_launch_description():
         'enable_llm', default_value='true',
         description='Start the llm_planner decision layer (true/false)')
 
+    # bt: 'reactive' (social_nav.xml) / 'ai' (ai_nav.xml) / 'no' (stock Nav2).
+    # Only used for run-folder routing here ('no' -> logs go to Nav2/); the
+    # actual behavior tree is chosen in nav2_slam_all.launch.py.
+    bt_arg = DeclareLaunchArgument(
+        'bt', default_value='reactive',
+        description='Behavior layer: reactive, ai or no (run-folder routing)')
+
     leo_description = get_package_share_directory("leo_description")
 
     robots_to_spawn = []
@@ -55,16 +62,19 @@ def generate_launch_description():
 
     detector = LaunchConfiguration('detector')
     enable_llm = LaunchConfiguration('enable_llm')
+    bt = LaunchConfiguration('bt')
 
-    # Route run logs into BT_LLM/ (LLM enabled) vs BT/ (no LLM):
+    # Route run logs into a MODE subfolder:
+    #   bt:=no        -> Nav2/    (stock Nav2, no social layer)
+    #   enable_llm:=true -> BT_LLM/
+    #   else             -> BT/
     # run_utils.get_run_dir() reads SWARM_RUN_MODE so coverage_plotter,
     # social_event_logger and llm_planner all write into the same subfolder.
     run_mode_env = SetEnvironmentVariable(
         'SWARM_RUN_MODE',
         PythonExpression([
-            "'BT_LLM' if '",
-            enable_llm,
-            "'.lower() == 'true' else 'BT'",
+            "'Nav2' if '", bt, "'.lower() == 'no' else ",
+            "('BT_LLM' if '", enable_llm, "'.lower() == 'true' else 'BT')",
         ]),
     )
 
@@ -73,6 +83,8 @@ def generate_launch_description():
         nodes = []
         det = context.perform_substitution(detector)   # 'depth' or 'yolo'
         llm_on = context.perform_substitution(enable_llm).lower() in ('true', '1')
+        bt_val = context.perform_substitution(bt).lower()   # reactive / ai / no
+        pure = (bt_val == 'no')   # stock Nav2: no human-awareness nodes
 
         # --- One bridge for all robots ---
         bridge_args = []
@@ -194,7 +206,10 @@ def generate_launch_description():
             #   depth = image_human_processor (blob heuristics, leo_image)
             #   yolo  = yolo_human_processor (YOLOv8n on RGB + depth ranging)
             # Both publish human_detected / human_close / human_distance / human_angle.
-            if det == 'yolo':
+            # Skipped in pure Nav2 (bt:=no): no social layer consumes human data.
+            if pure:
+                human_node = None
+            elif det == 'yolo':
                 human_node = Node(
                     package="swarm_basics",
                     executable="yolo_human_processor",
@@ -223,23 +238,33 @@ def generate_launch_description():
                 ],
             )
 
-            # Dynamic speed slowing near humans (scales controller cmd_vel)
-            velocity_adaptor_node = Node(
-                package="swarm_basics",
-                executable="velocity_adaptor",
-                name="velocity_adaptor",
-                namespace=ns,
-                output="screen",
-            )
+            # Dynamic speed slowing near humans/robots (scales controller
+            # cmd_vel). Disabled in pure Nav2 (bt:=no): the stock Nav2 baseline
+            # must have NO human/robot awareness, so the controller writes
+            # /cmd_vel directly (see nav2_slam_all.launch.py) and rovers only
+            # avoid what the lidar costmap sees.
+            if pure:
+                velocity_adaptor_node = None
+            else:
+                velocity_adaptor_node = Node(
+                    package="swarm_basics",
+                    executable="velocity_adaptor",
+                    name="velocity_adaptor",
+                    namespace=ns,
+                    output="screen",
+                )
 
-            # Robot-robot proximity perception (feeds IsRobotClose BT plugin)
-            robot_proximity_node = Node(
-                package="swarm_basics",
-                executable="robot_proximity",
-                name="robot_proximity",
-                namespace=ns,
-                output="screen",
-            )
+            # Robot-robot proximity perception (feeds IsRobotClose BT plugin + velocity_adaptor)
+            if pure:
+                robot_proximity_node = None
+            else:
+                robot_proximity_node = Node(
+                    package="swarm_basics",
+                    executable="robot_proximity",
+                    name="robot_proximity",
+                    namespace=ns,
+                    output="screen",
+                )
 
             # LLM high-level decision layer (feeds CheckLlmAction BT plugin).
             # Skipped when enable_llm=false -> no /ns/llm_action published ->
@@ -290,16 +315,21 @@ def generate_launch_description():
                 output="screen",
             )
 
-            # All per-robot nodes: LiDAR + RealSense + bump + odom + lidar_republish + depth_to_scan + human detector + velocity_adaptor + robot_proximity (+ llm_planner if enabled)
-            nodes += [state_pub, spawn_node, human_node, bump_node, velocity_adaptor_node,
-                      robot_proximity_node,
-                      odom_tf_node, lidar_republish_node, depth_to_scan]
+            # All per-robot nodes: LiDAR + RealSense + bump + odom + lidar_republish
+            # + depth_to_scan + human detector + velocity_adaptor + robot_proximity
+            # (+ llm_planner if enabled).  Pure Nav2 (bt:=no) drops the human
+            # awareness nodes entirely.
+            per_robot = [state_pub, spawn_node, human_node, bump_node,
+                         velocity_adaptor_node, robot_proximity_node,
+                         odom_tf_node, lidar_republish_node, depth_to_scan]
+            nodes += [n for n in per_robot if n is not None]
 
         return nodes
 
     return LaunchDescription([
         detector_arg,
         enable_llm_arg,
+        bt_arg,
         run_mode_env,
         plot_node,
         social_logger_node,

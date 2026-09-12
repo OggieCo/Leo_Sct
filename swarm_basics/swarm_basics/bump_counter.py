@@ -5,7 +5,11 @@ from rclpy.duration import Duration
 from std_msgs.msg import UInt32, String
 from ros_gz_interfaces.msg import Contacts
 
-COOLDOWN_SEC = 0.5
+# Cooldown per collision entity before a new bump counts again.  3 s turns a
+# sustained contact (rover pressing against a human/robot) into ONE bump per
+# encounter: re-touches within 3 s are ignored; only after they actually
+# separate and come back does a fresh bump count.
+COOLDOWN_SEC = 3.0
 PRUNE_HZ = 10.0
 CONTACT_TOPIC = 'contact'
 
@@ -23,9 +27,13 @@ class BumpCounter(Node):
         self.ns = self.get_namespace().strip('/') or 'root'
         self.cooldown = Duration(seconds=COOLDOWN_SEC)
         self.bump_count = 0
+        self.robot_bump_count = 0
+        self.human_bump_count = 0
         self.active = {}
         self.sub = self.create_subscription(Contacts, CONTACT_TOPIC, self.on_contacts, 10)
         self.pub_count = self.create_publisher(UInt32, 'bump_count', 10)
+        self.pub_robot = self.create_publisher(UInt32, 'robot_bump_count', 10)
+        self.pub_human = self.create_publisher(UInt32, 'human_bump_count', 10)
         self.pub_last  = self.create_publisher(String, 'last_bump_with', 10)
         self.create_timer(1.0/PRUNE_HZ, self.prune)
         self.get_logger().info(f"[{self.ns}] BumpCounter active")
@@ -44,10 +52,22 @@ class BumpCounter(Node):
             if other_col not in self.active:
                 self.bump_count += 1
                 self.active[other_col] = now
+                # Classify: another rover vs. an (invisible bumper of a) human.
+                # 'bump_count' stays the TOTAL so the old robot-robot A/B metric
+                # is preserved; robot_/human_bump_count split it for the thesis.
+                if 'robot_' in other_col:
+                    self.robot_bump_count += 1
+                    kind = 'robot'
+                else:
+                    self.human_bump_count += 1
+                    kind = 'human'
                 self.pub_count.publish(UInt32(data=self.bump_count))
+                self.pub_robot.publish(UInt32(data=self.robot_bump_count))
+                self.pub_human.publish(UInt32(data=self.human_bump_count))
                 self.pub_last.publish(String(data=other_col))
                 # coverage_plotter receives bump_count and logs to CSV
-                self.get_logger().info(f"[{self.ns}] bump #{self.bump_count} with: {other_col}")
+                self.get_logger().info(
+                    f"[{self.ns}] bump #{self.bump_count} ({kind}) with: {other_col}")
 
     def prune(self):
         now = self.get_clock().now()

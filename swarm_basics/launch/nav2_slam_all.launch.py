@@ -84,14 +84,24 @@ def write_costmap_params_file(ns, params):
 def create_slam_nodes(context, robots, bt='reactive'):
     pkg = get_package_share_directory('swarm_basics')
     slam_config = os.path.join(pkg, 'config', 'nav2', 'slam_toolbox.yaml')
-    bt_name = 'social_nav.xml' if bt != 'ai' else 'ai_nav.xml'
-    bt_xml = f'/root/ros2_ws/src/swarm_basics/config/bt/{bt_name}'
+    # Which behavior tree:
+    #   reactive -> social_nav.xml (pure reactive social reflexes)
+    #   ai       -> ai_nav.xml (BT + LLM decision layer)
+    #   no       -> NO social BT: Nav2's stock navigate_to_pose tree
+    if bt == 'ai':
+        bt_xml = '/root/ros2_ws/src/swarm_basics/config/bt/ai_nav.xml'
+    elif bt == 'no':
+        bt_xml = os.path.join(
+            get_package_share_directory('nav2_bt_navigator'),
+            'behavior_trees',
+            'navigate_to_pose_w_replanning_and_recovery.xml')
+    else:  # reactive
+        bt_xml = '/root/ros2_ws/src/swarm_basics/config/bt/social_nav.xml'
 
     nodes = []
 
     for ns, _, _, _ in robots:
         params = per_robot_params(ns)
-        # Which behavior tree: reactive (social_nav.xml) or AI (ai_nav.xml)
         params['default_nav_to_pose_bt_xml'] = bt_xml
         # Costmap sections must reach the embedded costmaps as a real YAML file
         # (namespace root key), not via the dict. Flat server params stay in dict.
@@ -99,8 +109,10 @@ def create_slam_nodes(context, robots, bt='reactive'):
         # Clean scan topic: {ns}/lidar/scan_clean is republished with frame {ns}/lidar_link
         # (lidar_republish node fixes Gazebo's mangled frame)
         scan_topic = f'/{ns}/lidar/scan_clean'
-        # Controller -> velocity_adaptor -> robot driver (social speed slowing)
-        cmd_vel_topic = f'/{ns}/cmd_vel_social'
+        # Controller output topic:
+        #   reactive/ai -> velocity_adaptor -> robot driver (social speed slowing)
+        #   no (pure)   -> robot driver directly (NO human/robot safety slow-down)
+        cmd_vel_topic = f'/{ns}/cmd_vel' if bt == 'no' else f'/{ns}/cmd_vel_social'
         odom_topic = f'/{ns}/odom'
         laser_frame = f'{ns}/lidar_link'
 
@@ -204,7 +216,9 @@ def create_slam_nodes(context, robots, bt='reactive'):
 def generate_launch_description():
     bt_arg = DeclareLaunchArgument(
         'bt', default_value='reactive',
-        description='Behavior tree: reactive (social_nav.xml) or ai (ai_nav.xml)')
+        description='Behavior tree: reactive (social_nav.xml), '
+                    'ai (ai_nav.xml, BT+LLM) or no '
+                    '(stock Nav2 navigate_to_pose, no social layer)')
     bt = LaunchConfiguration('bt')
     robot_list = [(ns, x, y, yaw) for ns, x, y, yaw in ROBOT_POSITIONS]
     return LaunchDescription([

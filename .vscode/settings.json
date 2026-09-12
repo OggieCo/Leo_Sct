@@ -33,6 +33,7 @@
         "/^python3 - <<'EOF'\nimport csv, math\np='/home/oggie/Documents/GitHub/Leo_Sct/results/coverage_logs/BT/run_2026-08-29_16-14-28/trajectories\\.csv'\nrows=list\\(csv\\.DictReader\\(open\\(p\\)\\)\\)\nts=sorted\\(float\\(r\\['elapsed_sec'\\]\\) for r in rows\\)\nprint\\('window=%\\.1fs'%\\(ts\\[-1\\]-ts\\[0\\]\\)\\)\nfor rid in \\('robot_0','robot_1'\\):\n    sub=\\[r for r in rows if r\\['robot_id'\\]==rid\\]\n    xs=\\[float\\(r\\['x'\\]\\) for r in sub\\]; ys=\\[float\\(r\\['y'\\]\\) for r in sub\\]\n    prev=None; dist=0; stalled=0\n    for r in sub:\n        x,y,t=float\\(r\\['x'\\]\\),float\\(r\\['y'\\]\\),float\\(r\\['elapsed_sec'\\]\\)\n        if prev:\n            d=math\\.hypot\\(x-prev\\[0\\],y-prev\\[1\\]\\); dt=t-prev\\[2\\]\n            dist\\+=d\n            if d<0\\.02 and dt>0\\.5: stalled\\+=dt\n        prev=\\(x,y,t\\)\n    print\\('%s dist=%\\.1fm stalled~%\\.0fs x\\[%\\.2f,%\\.2f\\] y\\[%\\.2f,%\\.2f\\]'%\\(rid,dist,stalled,min\\(xs\\),max\\(xs\\),min\\(ys\\),max\\(ys\\)\\)\\)\nEOF\necho ---BUMP---; grep -i bump /home/oggie/Documents/GitHub/Leo_Sct/results/coverage_logs/BT/run_2026-08-29_16-14-28/events\\.csv \\| head$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "./start_experiment.sh": true
     }
 }
