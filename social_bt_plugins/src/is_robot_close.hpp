@@ -69,7 +69,8 @@ public:
     block_angle_deg_(30.0), head_on_deg_(45.0), head_opp_deg_(30.0),
     side_cone_deg_(20.0), row_cone_deg_(10.0), dca_margin_(0.6),
     yield_max_s_(6.0), cooldown_s_(8.0), release_debounce_s_(1.5),
-    hold_cone_deg_(40.0), avoid_window_s_(4.5), back_dist_(1.2)
+    hold_cone_deg_(40.0), avoid_window_s_(6.0), back_dist_(1.2),
+    abort_hard_dist_(0.85), abort_cone_deg_(15.0)
   {
     rclcpp::Node::SharedPtr node;
     if (config().blackboard->get("node", node) && node) {
@@ -125,6 +126,13 @@ public:
         [this]() { executor_->spin(); });
       // {robot_avoid} gates the atomic arc branch in both BT trees.
       config().blackboard->set("robot_avoid", false);
+      // {arc_running} is maintained by the Arc nodes: while a smooth arc
+      // maneuver is already executing we must NOT take the tree over with a
+      // second ("away") arc — that chopped an LLM arc at ~73% completion
+      // (run_2026-09-13_13-05-24, LLM arc started at 3.3 m, avoid fired 2 s
+      // later, the pair froze for 40 s+).  Initialise here so the key always
+      // exists (BT.CPP get() throws on unknown keys).
+      config().blackboard->set("arc_running", false);
       RCLCPP_INFO(rclcpp::get_logger("IsRobotClose"),
                   "IsRobotClose: subscribed to %s/robot_close + robot_angle "
                   "+ robot_dca + robot_faster + robot_opposition_deg "
@@ -190,8 +198,15 @@ public:
       robot_close_ && std::abs(robot_angle_) <= head_on_deg_ &&
       robot_dca_ <= dca_margin_ &&
       robot_opposition_deg_ <= head_opp_deg_;
+    // side conflict (DCA <= margin): a rover CROSSING our path.  GATED to a
+    // FRONTAL arc — without the angle bound, a rover parked ~1 m BEHIND us
+    // (bearing ~170 deg; both stationary so the predicted closest approach
+    // collapses to the range) read as a "side conflict" and we yielded to
+    // the robot chasing us from behind (run_2026-09-13_13-57-37: robot_0
+    // ROBOT_YIELD_START with robot_1 at bearing +168..172 deg).
     const bool side_conflict =
-      robot_close_ && robot_dca_ <= dca_margin_;
+      robot_close_ && robot_dca_ <= dca_margin_ &&
+      std::abs(robot_angle_) <= 60.0;
     const bool on_our_right = robot_angle_ < -side_cone_deg_;
     // RIGHT-OF-WAY (right-hand traffic): "the robot standing on the LEFT
     // yields; the robot standing on the RIGHT has the way."  Locally: if the
@@ -219,7 +234,15 @@ public:
     // Only arm the atomic arc when there is room to turn: below back_dist_
     // an arc can swing into the other rover — release to the LLM "back"
     // action (or the reactive yield) for close-range separation instead.
-    if (head_on && !suppressing_ && !avoiding_ && robot_dist_ > back_dist_) {
+    // NEVER arm while another arc maneuver is already executing
+    // ({arc_running}): the takeover would chop a working turn mid-way
+    // (run_2026-09-13_13-05-24: LLM arc chopped at 2.0 s of a 2.7 s turn —
+    // bearing already -54 deg — and both rovers froze).  If still head-on
+    // once that maneuver ends, the next tick re-evaluates and acts.
+    bool arc_running = false;
+    config().blackboard->get("arc_running", arc_running);
+    if (head_on && !suppressing_ && !avoiding_ && !arc_running &&
+        robot_dist_ > back_dist_) {
       avoiding_ = true;
       avoid_until_s_ = now + avoid_window_s_;
       publish_event("ROBOT_AVOID_START");
@@ -229,10 +252,22 @@ public:
       // ArcOrFollow.  Setting both keeps the shared node tree-agnostic.
       config().blackboard->set("just_yielded", true);
     }
-    // Abort the atomic arc if the rovers get dangerously close mid-maneuver:
-    // turning at close range converges into a collision — stop arcing and
-    // let the LLM "back" (or the reactive yield) create separation instead.
-    if (avoiding_ && robot_dist_ <= back_dist_) {
+    // Abort the atomic arc only if the rovers get DANGEROUSLY close
+    // mid-maneuver AND the turn has not bitten yet.  The old rule aborted on
+    // the bare 1.2 m distance, which chopped both away-arcs of
+    // run_2026-09-13_13-05-24 after 0.4-2.7 s of a ~3.2 s turn (bearing
+    // already -54 deg = the maneuver WAS producing separation) and left the
+    // pair frozen for 40 s+.  Turning at close range only converges while
+    // the other rover is STILL dead-ahead; once the bearing has opened the
+    // arc must be allowed to finish:
+    //   * hard floor  (<= 0.85 m): abort unconditionally — no room at all,
+    //     let the LLM "back" / reactive yield create separation instead;
+    //   * dead-ahead  (<= 1.2 m && |bearing| <= 15 deg): the arc has not
+    //     started to diverge us yet -> abort before swinging into it.
+    const bool too_close_hard = robot_dist_ <= abort_hard_dist_;
+    const bool too_close_dead_ahead =
+      robot_dist_ <= back_dist_ && std::abs(robot_angle_) <= abort_cone_deg_;
+    if (avoiding_ && (too_close_hard || too_close_dead_ahead)) {
       avoiding_ = false;
       suppressing_ = true;
       suppress_until_s_ = now + cooldown_s_;
@@ -373,6 +408,8 @@ private:
   double hold_cone_deg_;
   double avoid_window_s_;
   double back_dist_;             // m; arc suppressed/aborted below this
+  double abort_hard_dist_;       // m; unconditional arc abort below this
+  double abort_cone_deg_;        // deg; abort below back_dist only if |bearing| <= this
 };
 
 }  // namespace social_bt

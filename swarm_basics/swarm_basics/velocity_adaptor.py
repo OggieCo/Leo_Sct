@@ -27,6 +27,7 @@ The scale is published on `social_speed_scale` for logging/evaluation.
 """
 
 import math
+import time
 
 import rclpy
 from rclpy.node import Node
@@ -40,10 +41,28 @@ class VelocityAdaptor(Node):
         super().__init__('velocity_adaptor')
         self.ns = self.get_namespace().strip('/') or 'root'
 
-        self.declare_parameter('d_stop', 0.4)         # m  -> scale 0
-        self.declare_parameter('d_slow', 2.5)         # m  -> start slowing
-        self.declare_parameter('rate_max', 60.0)      # deg/s -> min factor
-        self.declare_parameter('rate_min_factor', 0.15)
+        # TOLERANCE PASS (run_2026-09-13_13-23-21: robot_0 spent 33 % of the
+        # sampled seconds fully stopped — 18 s of it with a human merely in
+        # `human_close` range — so the walk was dominated by polite braking
+        # near EVERY human seen).  Humans still slow the rover smoothly, but
+        # only once they are actually relevant: braking now starts at 1.8 m
+        # (was 2.5 m = every human in the room), the side term is much weaker
+        # (0.65..1.0 vs 0.5..1.0) and a crossing human can no longer crush the
+        # command (motion floor 0.45, was 0.15).
+        self.declare_parameter('d_stop', 0.35)        # m  -> scale 0
+        # 1.8 -> 1.2 m (2026-09-13, user request): braking now starts only when
+        # the person is genuinely near.  At 0.5 m/s cruise the deceleration to
+        # the 0.35 m floor still fits comfortably inside 1.2 m, and the
+        # "always slowing" band in front of people shrinks accordingly.
+        self.declare_parameter('d_slow', 1.2)         # m  -> start slowing
+        self.declare_parameter('rate_max', 90.0)      # deg/s -> min factor
+        self.declare_parameter('rate_min_factor', 0.45)
+        # Detection hold (s): keep the last human term after `human_detected`
+        # drops instead of snapping back to 1.0 in one frame.  Without it the
+        # speed jumped 0.22 -> 1.00 -> 0.00 as the detector lost/re-found a
+        # person beside the rover (run_2026-09-13_14-23-26) — half of the
+        # "drive fast then stop for a moment" rhythm while passing humans.
+        self.declare_parameter('det_hold_s', 1.5)
 
         # Robot-robot proximity (from robot_proximity, same namespace)
         self.declare_parameter('rd_stop', 1.0)        # m  -> scale 0 near another rover
@@ -65,9 +84,22 @@ class VelocityAdaptor(Node):
         # LLM soft speed cap (llm_planner): 0..1, 1 = no limit from the AI
         self._llm_scale = 1.0
         self._sub_llm = self.create_subscription(Float32, 'llm_speed_scale', self.llm_cb, 10)
+        # Speed FLOOR (llm_planner): 0..1, 0 = no floor.  While one of OUR
+        # maneuvers is active (arc commit) or we hold the right-of-way over a
+        # peer that committed "yield", the robot proximity term must not pin
+        # the drive at ~0 — the maneuver needs motion to produce separation
+        # (run_2026-09-13_13-05-24: the right-of-way holder sat at robot
+        # term ~0.19 while its LLM said "proceed").  Only llm_planner
+        # publishes this topic, so the pure-BT and Nav2 conditions keep the
+        # exact previous behaviour (floor stays 0.0).
+        self._floor = 0.0
+        self._sub_floor = self.create_subscription(
+            Float32, 'social_speed_floor', self.floor_cb, 10)
 
         self._detected = False
         self._close = False
+        self._last_det_t = 0.0
+        self._last_human_term = 1.0
         self._dist = float('inf')
         self._angle = 0.0
         self._yaw_rate = 0.0
@@ -93,6 +125,8 @@ class VelocityAdaptor(Node):
     # -- inputs ------------------------------------------------------------
     def det_cb(self, msg):
         self._detected = msg.data
+        if msg.data:
+            self._last_det_t = time.time()
 
     def close_cb(self, msg):
         self._close = msg.data
@@ -114,6 +148,9 @@ class VelocityAdaptor(Node):
     def llm_cb(self, msg):
         self._llm_scale = max(0.0, min(1.0, float(msg.data)))
 
+    def floor_cb(self, msg):
+        self._floor = max(0.0, min(1.0, float(msg.data)))
+
     def ang_cb(self, msg):
         now = self.get_clock().now().nanoseconds / 1e9
         ang = float(msg.data)
@@ -134,22 +171,40 @@ class VelocityAdaptor(Node):
 
     # -- scale model -------------------------------------------------------
     def _scale(self):
+        # DETECTION HOLD: a dropped detection keeps the last human term for
+        # det_hold_s — the rover does not accelerate back to full cruise just
+        # because the detector lost a person it was passing.
         if not self._detected:
+            if (time.time() - self._last_det_t) < \
+                    self.get_parameter('det_hold_s').value:
+                return self._last_human_term
             return 1.0
         d = self._dist
         if not math.isfinite(d):
-            d = 0.4 if self._close else 2.5  # fallback: close -> near-stop
+            d = 0.35 if self._close else 1.2   # fallback: close -> near-stop
         d_stop = self.get_parameter('d_stop').value
         d_slow = self.get_parameter('d_slow').value
+        # DISTANCE GATE (run_2026-09-13_13-49-07: robot_0 paid a constant
+        # 11-16 % speed tax for humans 3-9 m away, off to the side — the
+        # angle and motion terms multiplied in with NO range gate, so every
+        # human ever seen slowed the rover).  Beyond the slowdown range a
+        # human is not our conflict yet: return full speed; the braking
+        # ramp below (and every other layer) applies inside d_slow only.
+        if d >= d_slow:
+            self._last_human_term = 1.0
+            return 1.0
         d_term = min(max((d - d_stop) / (d_slow - d_stop), 0.0), 1.0)
-        # angle: 1.0 dead ahead, 0.5 at +/-90 deg (side)
+        # angle: 1.0 dead ahead, 0.65 at +/-90 deg (side) — a human merely
+        # passing beside us must not cost half our speed (tolerance pass).
         a = min(abs(self._angle), 90.0)
-        a_term = 0.5 + 0.5 * math.cos(math.radians(a))
+        a_term = 0.65 + 0.35 * math.cos(math.radians(a))
         # motion: fast bearing change (side approach) -> extra slowing
         r_max = self.get_parameter('rate_max').value
         r_min = self.get_parameter('rate_min_factor').value
         r_term = min(max(1.0 - abs(self._angle_rate) / r_max, r_min), 1.0)
-        return max(0.0, min(1.0, d_term * a_term * r_term))
+        term = max(0.0, min(1.0, d_term * a_term * r_term))
+        self._last_human_term = term
+        return term
 
     def _robot_scale(self):
         """0..1 speed factor from proximity of the nearest other rover.
@@ -204,7 +259,11 @@ class VelocityAdaptor(Node):
 
     # -- output ------------------------------------------------------------
     def cmd_cb(self, msg):
-        s = self._scale() * self._robot_scale() * self._llm_scale
+        # Human term first (priority), then the robot term with the maneuver
+        # floor applied (an active arc / right-of-way holder may not be
+        # strangled by the proximity brake), then the LLM cap (stop/yield
+        # still wins: llm_scale == 0 multiplies everything to 0).
+        s = self._scale() * max(self._robot_scale(), self._floor) * self._llm_scale
         out = Twist()
         out.linear.x = msg.linear.x * s
         out.linear.y = msg.linear.y * s
@@ -223,7 +282,7 @@ class VelocityAdaptor(Node):
             self.get_logger().info(
                 f'slowing: scale={s:.2f} human_dist={self._dist:.2f} '
                 f'robot_dist={self._robot_dist:.2f} '
-                f'robot_angle={self._robot_angle:+.1f} deg/s',
+                f'robot_angle={self._robot_angle:+.1f} floor={self._floor:.2f}',
                 throttle_duration_sec=0.5)
 
 

@@ -99,9 +99,15 @@
             <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
           </Sequence>
           <!-- NO in-place Spin: real rovers have adhesive-taped wheels and
-               cannot rotate in place.  Recovery = clear + wait + backup only. -->
-          <Wait wait_duration="5"/>
-          <BackUp backup_dist="0.6" backup_speed="0.5"/>
+               cannot rotate in place.  Recovery = clear + wait + backup only.
+               The BackUp is rear-gated (IsRearClear): never reverse blind
+               into whatever is behind (run_2026-09-13_13-57-37: robot_0
+               backed at 0.5 m/s into robot_1 0.8 m behind it). -->
+          <Wait wait_duration="2"/>
+          <ReactiveSequence name="RecoveryBackUp">
+            <IsRearClear/>
+            <BackUp backup_dist="0.6" backup_speed="0.5"/>
+          </ReactiveSequence>
         </RoundRobin>
       </ReactiveFallback>
     </RecoveryNode>

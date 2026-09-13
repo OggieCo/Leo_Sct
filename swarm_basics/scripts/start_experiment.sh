@@ -30,6 +30,14 @@
 #   --ready-timeout SEC     Max wait for Nav2 to become active (default 240)
 #   --run-time SEC          Graceful auto-stop N seconds after READY
 #                           (default 300 = 5 min; 0 disables the timer)
+#   --dynamic-plots BOOL    Live coverage-map redraws during the run
+#                           (default false; coverage map rendered at shutdown)
+#   --raw-contacts BOOL     Log EVERY raw contact message to contacts_raw.csv
+#                           (default false; events.csv keeps one
+#                           CONTACT_BEGIN/CONTACT_END pair per episode)
+#   --scenario NAME|N       Scenario to run: e.g. 3_rovers_3_humans,
+#                           3_rovers_and_obstacles (numbers 1..10 also work);
+#                           run folders are grouped under <MODE>/<name>/
 #
 # Press Ctrl+C to shut everything down (also saves all logs).
 # =============================================================================
@@ -46,13 +54,16 @@ WORLD=""
 GOALS="none"
 READY_TIMEOUT=240
 RUN_TIME=300
+DYNAMIC_PLOTS="false"
+RAW_CONTACTS="false"
+SCENARIO=""
 
 # ------------------------------- helpers ------------------------------------
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
-    sed -n '2,34p' "$0" | cut -c3-
+    sed -n '2,42p' "$0" | cut -c3-
     exit "${1:-0}"
 }
 
@@ -107,6 +118,10 @@ while [[ $# -gt 0 ]]; do
         --world)         WORLD="${2:-}"; shift 2 ;;
         --ready-timeout) READY_TIMEOUT="${2:-}"; shift 2 ;;
         --run-time)      RUN_TIME="${2:-}"; shift 2 ;;
+        --dynamic-plots) DYNAMIC_PLOTS="${2:-}"; shift 2 ;;
+        --raw-contacts)  RAW_CONTACTS="${2:-}"; shift 2 ;;
+        --scenario)      SCENARIO="${2:-}"; shift 2 ;;
+        --seed)          SCENARIO="${2:-}"; shift 2 ;;  # legacy alias
         -h|--help)       usage 0 ;;
         *)               die "Unknown argument: $1 (try --help)" ;;
     esac
@@ -122,6 +137,17 @@ case "$GOALS" in
     *) die "--goals must be one of: none, random, fixed, walk" ;;
 esac
 [[ "$RUN_TIME" =~ ^[0-9]+$ ]] || die "--run-time must be a non-negative integer (seconds)"
+case "$DYNAMIC_PLOTS" in
+    true|false) ;;
+    *) die "--dynamic-plots must be true or false" ;;
+esac
+case "$RAW_CONTACTS" in
+    true|false) ;;
+    *) die "--raw-contacts must be true or false" ;;
+esac
+if [[ -n "$SCENARIO" ]]; then
+    [[ "$SCENARIO" =~ ^[0-9A-Za-z_-]+$ ]] || die "--scenario must be a number (1..10) or a scenario name (e.g. 2_rovers_1_humans)"
+fi
 
 # LLM default: only the 'ai' tree consumes it.
 if [[ -z "$LLM" ]]; then
@@ -142,6 +168,26 @@ if ! ros2 pkg prefix swarm_basics >/dev/null 2>&1 && [[ -f /root/ros2_ws/install
 fi
 set -u
 command -v ros2 >/dev/null 2>&1 || die "ros2 not found — source your ROS 2 environment first."
+
+# ------------------------------- scenario -----------------------------------
+# --scenario NAME|N: use worlds/scenarios/<name> — generated(if missing) world
+# file + scenario.json that robot_config reads for the rover spawn poses; run
+# folders go to results/coverage_logs/<MODE>/<name>/ (SWARM_SCENARIO).
+# The name IS the scenario (e.g. 2_rovers_1_humans / 3_rovers_and_obstacles);
+# the numbers 1..10 also resolve (--seed works as a legacy alias).
+if [[ -n "$SCENARIO" ]]; then
+    GEN="$SCRIPT_DIR/../worlds/scenario_generator.py"
+    SCENARIO_NAME="$(python3 "$GEN" --scenario "$SCENARIO" --print-name 2>/dev/null || true)"
+    [[ -n "$SCENARIO_NAME" ]] || die "Unknown scenario '$SCENARIO' — see SCENARIOS in worlds/scenario_generator.py"
+    SCENARIO_DIR="$SCRIPT_DIR/../worlds/scenarios/$SCENARIO_NAME"
+    if [[ ! -f "$SCENARIO_DIR/scenario.sdf" ]]; then
+        log "Generating scenario $SCENARIO_NAME..."
+        python3 "$GEN" --scenario "$SCENARIO" || die "Scenario generation failed ($SCENARIO)"
+    fi
+    export SWARM_SCENARIO="$SCENARIO_NAME"
+    export SWARM_SCENARIO_JSON="$SCENARIO_DIR/scenario.json"
+    [[ -z "$WORLD" ]] && WORLD="$SCENARIO_DIR/scenario.sdf"
+fi
 
 # World name (bridges/contact topics are built from this constant).
 WORLD_NAME="$(python3 -c 'from swarm_basics.robot_config import WORLD_NAME; print(WORLD_NAME)' 2>/dev/null || true)"
@@ -165,7 +211,14 @@ elif command -v gz >/dev/null 2>&1; then IGN="gz"
 fi
 
 # ------------------------------- logs ---------------------------------------
-LOG_DIR="$SCRIPT_DIR/startup_logs/$(date +%Y-%m-%d_%H-%M-%S)"
+# One run id for THIS launch, shared by every node through SWARM_RUN_ID: all
+# CSVs (goal_stats.csv included) land in the same results/coverage_logs/<MODE>/
+# [<scenario>/]run_<id> folder — even for nodes started only after the Nav2
+# readiness gate ~30 s in, which used to splinter a second run_ folder
+# (run_..._16-53-28).
+RUN_ID="$(date +%Y-%m-%d_%H-%M-%S)"
+export SWARM_RUN_ID="$RUN_ID"
+LOG_DIR="$SCRIPT_DIR/startup_logs/$RUN_ID"
 mkdir -p "$LOG_DIR"
 
 # ------------------------------- cleanup ------------------------------------
@@ -209,12 +262,12 @@ if pgrep -f 'ros2 launch swarm_basics' >/dev/null 2>&1 \
     pgrep -af 'ros2_ws/install|ros_gz_bridge|slam_toolbox|nav2_' || echo all-clean"
 fi
 
-log "Mode: bt=$BT  llm=$LLM  detector=$DETECTOR  headless=$HEADLESS  goals=$GOALS"
+log "Mode: bt=$BT  llm=$LLM  detector=$DETECTOR  headless=$HEADLESS  goals=$GOALS  dynamic_plots=$DYNAMIC_PLOTS  raw_contacts=$RAW_CONTACTS  scenario=${SCENARIO:-none}"
 [[ -n "$HAVE_SETSID" ]] || log "WARNING: 'setsid' not found — shutdown may not reach all child processes."
 [[ -n "$HAVE_ENV_RESET" ]] || log "WARNING: 'env --default-signal' unavailable — graceful SIGINT may not reach the stack; shutdown will escalate to SIGTERM/SIGKILL."
 
 # ------------------------------- 1) Gazebo ----------------------------------
-SIM_ARGS=(headless:="$HEADLESS" detector:="$DETECTOR" enable_llm:="$LLM" bt:="$BT")
+SIM_ARGS=(headless:="$HEADLESS" detector:="$DETECTOR" enable_llm:="$LLM" bt:="$BT" dynamic_plots:="$DYNAMIC_PLOTS" log_raw_contacts:="$RAW_CONTACTS")
 [[ -n "$WORLD" ]] && SIM_ARGS+=(sim_world:="$WORLD")
 
 log "Starting Gazebo + robots: ros2 launch swarm_basics leo_gz.launch.py ${SIM_ARGS[*]}"
@@ -249,7 +302,7 @@ deadline=$((SECONDS + READY_TIMEOUT))
 while (( SECONDS < deadline )); do
     all=1
     for ns in "${ROBOTS[@]}"; do
-        state="$(ros2 lifecycle get "/${ns}/bt_navigator" 2>/dev/null || true)"
+        state="$(timeout 5 ros2 lifecycle get "/${ns}/bt_navigator" 2>/dev/null || true)"  # timeout: a wedged ros2 CLI daemon must never hang the gate (seen 2026-09-13)
         [[ "$state" == active* ]] || all=0
     done
     if (( all )); then ready=true; break; fi

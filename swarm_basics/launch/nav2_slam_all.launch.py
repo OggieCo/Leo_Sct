@@ -100,7 +100,7 @@ def create_slam_nodes(context, robots, bt='reactive'):
 
     nodes = []
 
-    for ns, _, _, _ in robots:
+    for i, (ns, _, _, _) in enumerate(robots):
         params = per_robot_params(ns)
         params['default_nav_to_pose_bt_xml'] = bt_xml
         # Costmap sections must reach the embedded costmaps as a real YAML file
@@ -174,8 +174,12 @@ def create_slam_nodes(context, robots, bt='reactive'):
         # resolve their initial transform and Nav2 activates cleanly. bond_timeout
         # > 4s default so a slow-configured node doesn't cause the manager to give
         # up mid-bring-up (which left a robot's bt_navigator inactive before).
+        # The start is also STAGGERED per robot (12 s + 8 s per index): with 4
+        # rovers, four simultaneous bring-ups starved the service calls and
+        # robot_3's bt_navigator activation aborted with async_send_request
+        # failed — serializing the bring-ups makes every robot activate.
         nodes.append(TimerAction(
-            period=12.0,
+            period=12.0 + 8.0 * i,
             actions=[Node(
                 package='nav2_lifecycle_manager', executable='lifecycle_manager',
                 name='lifecycle_manager', namespace=ns,

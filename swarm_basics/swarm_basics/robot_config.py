@@ -1,4 +1,6 @@
+import json
 import math
+import os
 
 WORLD_NAME = "human_world"
 
@@ -33,6 +35,24 @@ ROBOT_POSITIONS = [
     # human (robot_0 only)
     #("robot_0",  0.0,  3.0, 4.7124),
 ]
+
+# Seed-scenario override (set by start_experiment.sh --seed): when
+# SWARM_SCENARIO_JSON points at a generated scenario file, the rover set and
+# spawn poses come from THERE instead of the hardcoded list above, so the
+# spawner, Nav2/SLAM, goal nodes, bridges and the coverage plotter all agree
+# on the same layout.  A missing/malformed file silently keeps the defaults.
+_scenario_path = os.environ.get("SWARM_SCENARIO_JSON", "")
+if _scenario_path and os.path.isfile(_scenario_path):
+    try:
+        with open(_scenario_path) as _f:
+            _scenario_robots = json.load(_f).get("robots", [])
+        if _scenario_robots:
+            ROBOT_POSITIONS = [
+                (r[0], float(r[1]), float(r[2]), float(r[3]))
+                for r in _scenario_robots
+            ]
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        pass  # keep the hardcoded defaults
 
 
 def world_to_map(robot_name, x, y, yaw_world=0.0):

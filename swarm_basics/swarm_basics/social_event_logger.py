@@ -37,6 +37,7 @@ from std_msgs.msg import Bool, Float32, String
 from ros_gz_interfaces.msg import Contacts
 
 from swarm_basics.robot_config import WORLD_NAME
+from swarm_basics.run_utils import CONTACT_COOLDOWN_SEC
 
 BASE_DIR = '/root/ros2_ws/src/results/coverage_logs'
 STATE_HEADER = ('timestamp,elapsed_sec,robot_id,x,y,yaw,'
@@ -46,6 +47,14 @@ STATE_HEADER = ('timestamp,elapsed_sec,robot_id,x,y,yaw,'
 EVENT_HEADER = 'timestamp,elapsed_sec,robot_id,event_type,details'
 OBSTACLE_NEAR_THRESHOLD = 0.5
 BACKWARD_THRESHOLD = -0.01
+COOLDOWN_SEC = CONTACT_COOLDOWN_SEC   # shared: BUMP = one per contact episode
+
+
+def entity_name(ent) -> str:
+    try:
+        return ent.name
+    except AttributeError:
+        return str(ent)
 
 
 class SocialEventLogger(Node):
@@ -84,6 +93,7 @@ class SocialEventLogger(Node):
                 'prev_human_detected': False, 'prev_robot_close': False,
                 'prev_obstacle_min': float('inf'), 'prev_backwards': False,
                 'bump_count': 0,
+                'active': {},   # per-entity last-contact time (BUMP episodes)
             }
 
         # world pose
@@ -182,9 +192,26 @@ class SocialEventLogger(Node):
         s['backwards'] = back
 
     def contact_cb(self, ns, msg):
+        """BUMP = one event per contact episode (same semantics as
+        bump_counter): a sustained press counts once; the entity re-arms only
+        after COOLDOWN_SEC without any contact.  Raw contact samples remain in
+        events.csv (written by coverage_plotter) if intensity is needed."""
         s = self.state[ns]
-        s['bump_count'] += 1
-        self.event(ns, 'BUMP', f'count={s["bump_count"]}')
+        now = self.now()
+        for c in msg.contacts:
+            c1 = entity_name(c.collision1)
+            c2 = entity_name(c.collision2)
+            is1_me = ns in c1
+            is2_me = ns in c2
+            if is1_me == is2_me:
+                continue
+            other = c2 if is1_me else c1
+            last = s['active'].get(other)
+            if last is None or now - last > COOLDOWN_SEC:
+                s['bump_count'] += 1
+                self.event(ns, 'BUMP',
+                           f'count={s["bump_count"]} other={other.split("::")[0]}')
+            s['active'][other] = now
 
     # ---- event + state writes -------------------------------------------
     def event(self, ns, etype, details):

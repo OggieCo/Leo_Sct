@@ -5,11 +5,13 @@ from rclpy.duration import Duration
 from std_msgs.msg import UInt32, String
 from ros_gz_interfaces.msg import Contacts
 
-# Cooldown per collision entity before a new bump counts again.  3 s turns a
-# sustained contact (rover pressing against a human/robot) into ONE bump per
-# encounter: re-touches within 3 s are ignored; only after they actually
-# separate and come back does a fresh bump count.
-COOLDOWN_SEC = 3.0
+from swarm_basics.run_utils import CONTACT_COOLDOWN_SEC
+
+# Cooldown per collision entity before a new bump counts again (shared with
+# coverage_plotter/social_event_logger): a sustained contact is ONE bump per
+# encounter; only after the entity has been out of contact for the cooldown
+# does a fresh bump count.
+COOLDOWN_SEC = CONTACT_COOLDOWN_SEC
 PRUNE_HZ = 10.0
 CONTACT_TOPIC = 'contact'
 
@@ -51,7 +53,6 @@ class BumpCounter(Node):
             other_col = col2 if is1_me else col1
             if other_col not in self.active:
                 self.bump_count += 1
-                self.active[other_col] = now
                 # Classify: another rover vs. an (invisible bumper of a) human.
                 # 'bump_count' stays the TOTAL so the old robot-robot A/B metric
                 # is preserved; robot_/human_bump_count split it for the thesis.
@@ -68,6 +69,10 @@ class BumpCounter(Node):
                 # coverage_plotter receives bump_count and logs to CSV
                 self.get_logger().info(
                     f"[{self.ns}] bump #{self.bump_count} ({kind}) with: {other_col}")
+            # Refresh on EVERY contact message: while the overlap persists the
+            # entity stays 'active' and only a real >= COOLDOWN_SEC separation
+            # re-arms it, so one encounter counts exactly one bump.
+            self.active[other_col] = now
 
     def prune(self):
         now = self.get_clock().now()

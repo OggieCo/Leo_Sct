@@ -147,8 +147,20 @@
             <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
           </Sequence>
           <!-- NO in-place Spin: real rovers have adhesive-taped wheels -->
-          <Wait wait_duration="5"/>
-          <BackUp backup_dist="0.6" backup_speed="0.5"/>
+          <Wait wait_duration="2"/>
+          <!-- NEVER reverse blind: gate the recovery BackUp on the lidar rear
+               sector.  run_2026-09-13_13-57-37: with every replan failing,
+               the recovery RoundRobin ran BackUp twice and drove robot_0 at
+               0.5 m/s into robot_1 parked ~0.8 m directly behind it (1 bump
+               each).  If the rear is blocked the sequence fails and the
+               RoundRobin cycles the clear/wait actions instead.
+               (Wait 5 -> 2 s: the recovery cycles must separate the rovers
+               faster when NavFn keeps failing because a peer sits inside
+               our inflation — see nav2_generic.yaml inflation note.) -->
+          <ReactiveSequence name="RecoveryBackUp">
+            <IsRearClear/>
+            <BackUp backup_dist="0.6" backup_speed="0.5"/>
+          </ReactiveSequence>
         </RoundRobin>
       </ReactiveFallback>
     </RecoveryNode>

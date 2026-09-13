@@ -28,11 +28,13 @@ from nav2_msgs.action import NavigateToPose
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import OccupancyGrid, Odometry
+import csv
 import math
 import signal
 import time
 
 from swarm_basics.robot_config import ROBOT_POSITIONS, world_to_map
+from swarm_basics.run_utils import get_run_dir
 
 # ---------------------------------------------------------------------------
 # PER-ROBOT FIXED TOURS — world (x, y) waypoints, one fixed sequence per rover.
@@ -119,6 +121,78 @@ FIXED_GOALS_BY_ROBOT = {
         (-5.5, -5.5),
         (5.5, -5.5),
     ],
+    # --- 3- and 4-rover seeds (3_rovers_3_humans / 4_rovers_3_humans_obstacles):
+    # two more complementary radius pairs (2.5/4.5 and 3.5/5.5).  With four
+    # rovers the complementary spacing gets tight, so robot_2/robot_3 share a
+    # few corner/diagonal waypoints with robot_0/robot_1 — edit freely.
+    'robot_2': [
+        # inner ring (rotated 4 steps vs robot_0; SHARED human zone)
+        (0.0, 2.0),
+        (-2.0, 2.0),
+        (-2.0, 0.0),
+        (-2.0, -2.0),
+        (0.0, -2.0),
+        (2.0, -2.0),
+        (0.0, 0.0),
+        (2.0, 0.0),
+        # middle ring radius 2.5
+        (2.5, 0.0),
+        (2.5, 2.5),
+        (0.0, 2.5),
+        (-2.5, 2.5),
+        (-2.5, 0.0),
+        (-2.5, -2.5),
+        (0.0, -2.5),
+        (2.5, -2.5),
+        # outer ring radius 4.5
+        (4.5, 0.0),
+        (4.5, 4.5),
+        (0.0, 4.5),
+        (-4.5, 4.5),
+        (-4.5, 0.0),
+        (-4.5, -4.5),
+        (0.0, -4.5),
+        (4.5, -4.5),
+        # corners at 6.0
+        (6.0, 6.0),
+        (-6.0, 6.0),
+        (-6.0, -6.0),
+        (6.0, -6.0),
+    ],
+    'robot_3': [
+        # inner ring (rotated 6 steps vs robot_0; SHARED human zone)
+        (2.0, -2.0),
+        (0.0, 0.0),
+        (2.0, 0.0),
+        (0.0, 2.0),
+        (-2.0, 2.0),
+        (-2.0, 0.0),
+        (-2.0, -2.0),
+        (0.0, -2.0),
+        # middle ring radius 3.5
+        (3.5, 0.0),
+        (3.5, 3.5),
+        (0.0, 3.5),
+        (-3.5, 3.5),
+        (-3.5, 0.0),
+        (-3.5, -3.5),
+        (0.0, -3.5),
+        (3.5, -3.5),
+        # outer ring radius 5.5
+        (5.5, 0.0),
+        (5.5, 5.5),
+        (0.0, 5.5),
+        (-5.5, 5.5),
+        (-5.5, 0.0),
+        (-5.5, -5.5),
+        (0.0, -5.5),
+        (5.5, -5.5),
+        # corners at 6.5
+        (6.5, 6.5),
+        (-6.5, 6.5),
+        (-6.5, -6.5),
+        (6.5, -6.5),
+    ],
 }
 
 # Fallback for any rover without a dedicated entry (keeps old behaviour).
@@ -138,6 +212,16 @@ class FixedGoalPublisher(Node):
         # Per-robot state: action client, stop publisher, goal handle, busy
         # flag, index into FIXED_GOALS, current odom pose and map known-frac.
         self.spawns = {ns: (x, y, yaw) for ns, x, y, yaw in ROBOT_POSITIONS}
+        # Resolve the shared run folder EAGERLY: start_experiment.sh starts
+        # this node only after the Nav2 readiness gate (~30 s in), so a lazy
+        # resolve would find the run folder already "old" and put
+        # goal_stats.csv into its own second folder (run_..._16-53-28).
+        # SWARM_RUN_ID (exported by the launcher) pins every node to the
+        # same run_<id> folder.
+        try:
+            self._run_dir = get_run_dir()
+        except OSError:
+            self._run_dir = None   # fallback: retry on the first write
         self.robots = {}
         for ns, _, _, _ in ROBOT_POSITIONS:
             self.robots[ns] = {
@@ -153,6 +237,9 @@ class FixedGoalPublisher(Node):
                 'pose': None,          # (x, y, yaw) in {ns}/odom frame
                 'map_known': 0.0,      # known fraction of /{ns}/map
                 'done_logged': False,
+                # Goal-outcome counters -> goal_stats.csv (merged into
+                # summary.csv by coverage_plotter, works for all three arms).
+                'g_sent': 0, 'g_ok': 0, 'g_fail': 0, 'g_scan': 0,
             }
             # SLAM occupancy grid -> "is the arena scanned enough for far goals?"
             self.create_subscription(
@@ -324,6 +411,11 @@ class FixedGoalPublisher(Node):
 
         robot['busy'] = True
         robot['on_fixed_goal'] = on_fixed
+        if on_fixed:
+            robot['g_sent'] += 1
+        else:
+            robot['g_scan'] += 1
+        self._write_goal_stats()
         label = 'goal' if on_fixed else 'scan'
         self.get_logger().info(
             f'[{ns}] {label} #{idx}: world ({x:.1f}, {y:.1f}) -> '
@@ -337,6 +429,8 @@ class FixedGoalPublisher(Node):
         if not goal_handle.accepted:
             self.get_logger().warn(
                 f'[{ns}] Goal rejected by Nav2 — retrying in 5s')
+            robot['g_fail'] += 1
+            self._write_goal_stats()
             robot['busy'] = False
             self._schedule(5.0, lambda: self.send_goal(ns))
             return
@@ -352,6 +446,7 @@ class FixedGoalPublisher(Node):
         if status == GoalStatus.STATUS_SUCCEEDED:
             robot['fail_count'] = 0
             if robot['on_fixed_goal']:
+                robot['g_ok'] += 1
                 robot['idx'] += 1
                 self.get_logger().info(
                     f'[{ns}] goal #{robot["idx"]-1} reached — next '
@@ -360,9 +455,13 @@ class FixedGoalPublisher(Node):
                 self.get_logger().info(
                     f'[{ns}] scan goal reached — retrying goal '
                     f'#{robot["idx"]}')
+            self._write_goal_stats()
             self._schedule(0.5, lambda: self.send_goal(ns))
         else:
             robot['fail_count'] += 1
+            if robot['on_fixed_goal']:
+                robot['g_fail'] += 1
+            self._write_goal_stats()
             if (robot['on_fixed_goal'] and
                     robot['fail_count'] >= self.MAX_FAILS_BEFORE_SCAN):
                 # Stop retrying an unreachable fixed goal in place: send a
@@ -379,11 +478,40 @@ class FixedGoalPublisher(Node):
                     f'SUCCEEDED) — retrying in 5s')
             self._schedule(5.0, lambda: self.send_goal(ns))
 
+    def _write_goal_stats(self):
+        """Per-robot goal outcomes -> <run_dir>/goal_stats.csv.
+
+        Works for every arm (Nav2 / BT / BT+LLM — the goal driver is shared):
+        goals_sent/succeeded/failed count REAL tour goals, scan_goals counts
+        the temporary forward-scan goals.  Rewritten on every change (tiny
+        file) so a Ctrl-C can never lose the counts; coverage_plotter merges
+        these rows into summary.csv.
+        """
+        try:
+            if self._run_dir is None:
+                # Fallback if the eager resolve in __init__ failed: resolve
+                # ONCE and reuse for every later write — a fresh
+                # get_run_dir() per write splintered one run across folders
+                # (run_2026-09-13_16-46-49 and siblings).
+                self._run_dir = get_run_dir()
+            path = self._run_dir / 'goal_stats.csv'
+            with open(path, 'w', newline='') as f:
+                w = csv.writer(f)
+                w.writerow(['robot_id', 'goals_sent', 'goals_succeeded',
+                            'goals_failed', 'scan_goals'])
+                for ns in self.robots:
+                    r = self.robots[ns]
+                    w.writerow([ns, r.get('g_sent', 0), r.get('g_ok', 0),
+                                r.get('g_fail', 0), r.get('g_scan', 0)])
+        except OSError as e:
+            self.get_logger().warn(f'could not write goal_stats.csv: {e}')
+
     def killswitch(self):
         """Stop every rover on shutdown: cancel active Nav2 goals and flush
         zero-velocity commands to Gazebo BEFORE rclpy tears down the context
         (publishing in destroy_node is too late)."""
         self.get_logger().info('Stopping robot(s)...')
+        self._write_goal_stats()   # final counts before the run folder closes
         for ns, robot in self.robots.items():
             # 1) cancel the active Nav2 goal so the controller stops commanding
             try:

@@ -92,6 +92,18 @@ def generate_launch_description():
         description="Behavior layer: reactive, ai or no (bt:=no logs runs to Nav2/)",
     )
 
+    dynamic_plots_arg = DeclareLaunchArgument(
+        "dynamic_plots",
+        default_value="true",
+        description="Live coverage-map redraws (false = render only at shutdown)",
+    )
+
+    log_raw_contacts_arg = DeclareLaunchArgument(
+        "log_raw_contacts",
+        default_value="false",
+        description="Also write every raw contact message to contacts_raw.csv",
+    )
+
     # Setup to launch the simulator and Gazebo world
     gz_sim = OpaqueFunction(function=launch_gz)
 
@@ -104,6 +116,8 @@ def generate_launch_description():
             "detector": LaunchConfiguration("detector"),
             "enable_llm": LaunchConfiguration("enable_llm"),
             "bt": LaunchConfiguration("bt"),
+            "dynamic_plots": LaunchConfiguration("dynamic_plots"),
+            "log_raw_contacts": LaunchConfiguration("log_raw_contacts"),
         }.items(),
     )
 
@@ -131,6 +145,8 @@ def generate_launch_description():
             detector_arg,
             enable_llm_arg,
             bt_arg,
+            dynamic_plots_arg,
+            log_raw_contacts_arg,
             gz_sim,
             spawn_robot,
             topic_bridge,

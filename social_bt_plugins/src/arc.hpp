@@ -40,7 +40,7 @@ public:
   : BT::ActionNodeBase(name, conf),
     started_(false), initial_yaw_(0.0), odom_yaw_(0.0), odom_ok_(false),
     start_time_s_(0.0), linear_(0.0), angular_(0.0), arc_angle_(0.0),
-    time_allowance_s_(6.0), robot_dist_(100.0)
+    time_allowance_s_(6.0), robot_dist_(100.0), last_end_s_(-1e9)
   {
     rclcpp::Node::SharedPtr node;
     if (config().blackboard->get("node", node) && node) {
@@ -105,6 +105,20 @@ public:
     }
 
     if (!started_) {
+      // ONE-SHOT (run_2026-09-13_13-05-24): the tree re-ticks this node every
+      // tick, so after a COMPLETED maneuver a still-selected arc branch
+      // (LLM action / {robot_avoid} latch) would immediately start a SECOND
+      // arc in the same encounter and spin the rover again.  Suppress any
+      // re-start within kRearmCooldownS of the last maneuver end and report
+      // SUCCESS so the tree moves on to FollowPath; after the cooldown a
+      // genuinely new encounter may arc normally.
+      if (node->now().seconds() - last_end_s_ < kRearmCooldownS) {
+        RCLCPP_INFO_THROTTLE(
+          rclcpp::get_logger("Arc"), *node->get_clock(), 2000,
+          "arc re-arm suppressed (%.1f s since last maneuver end — one-shot)",
+          node->now().seconds() - last_end_s_);
+        return BT::NodeStatus::SUCCESS;
+      }
       double arc_angle = 1.05, speed = 0.3, radius = 0.95, time_allowance = 6.0;
       std::string direction = "left";
       bool adaptive = false;
@@ -188,6 +202,9 @@ public:
       initial_yaw_ = odom_yaw_;
       start_time_s_ = node->now().seconds();
       started_ = true;
+      // Tell IsRobotClose an arc maneuver is executing: its {robot_avoid}
+      // takeover must NOT chop this turn (see is_robot_close.hpp).
+      config().blackboard->set("arc_running", true);
       RCLCPP_INFO(rclcpp::get_logger("Arc"),
                   "starting arc: turn %.2f rad at r=%.2f, v=%.2f (%s)",
                   arc_angle_, radius, speed, direction.c_str());
@@ -196,6 +213,7 @@ public:
     if (node->now().seconds() - start_time_s_ > time_allowance_s_) {
       stop();
       started_ = false;
+      last_end_s_ = node->now().seconds();
       RCLCPP_WARN(rclcpp::get_logger("Arc"), "Arc time allowance exceeded");
       return BT::NodeStatus::FAILURE;
     }
@@ -217,6 +235,7 @@ public:
     if (std::fabs(dyaw) >= arc_angle_) {
       stop();
       started_ = false;
+      last_end_s_ = node->now().seconds();
       RCLCPP_INFO(rclcpp::get_logger("Arc"),
                   "Arc complete (turned %.2f rad)", std::fabs(dyaw));
       return BT::NodeStatus::SUCCESS;
@@ -252,11 +271,20 @@ public:
   }
 
 private:
+  // s: any re-start within this window after a maneuver end reports SUCCESS
+  // without moving — one-shot arcs (see the guard in tick()).
+  static constexpr double kRearmCooldownS = 4.0;
+
   void stop()
   {
     if (pub_cmd_) {
       geometry_msgs::msg::Twist zero;
       pub_cmd_->publish(zero);
+    }
+    // An executing maneuver owns the "arc_running" flag (consumed by
+    // IsRobotClose's robot_avoid arming gate); the zero command also ends it.
+    if (config().blackboard) {
+      config().blackboard->set("arc_running", false);
     }
   }
 
@@ -277,6 +305,7 @@ private:
   double arc_angle_;
   double time_allowance_s_;
   float robot_dist_;                 // nearest_robot_dist, m (adaptive sizing)
+  double last_end_s_;                // sim time of the last maneuver end (one-shot latch)
 };
 
 }  // namespace social_bt

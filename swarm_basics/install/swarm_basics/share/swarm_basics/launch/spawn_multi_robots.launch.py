@@ -8,6 +8,7 @@ from launch.actions import SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from launch.substitutions import PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 
 # Load robot positions from shared config (edit robot_config.py to add/remove robots)
@@ -33,6 +34,20 @@ def generate_launch_description():
         'bt', default_value='reactive',
         description='Behavior layer: reactive, ai or no (run-folder routing)')
 
+    # dynamic_plots: 'true' -> live coverage-map redraws every 0.5 s (PNGs every
+    # 2 s); 'false' -> render the coverage map only once at shutdown (lighter
+    # during the run; trajectories/events CSVs are still written continuously).
+    dynamic_plots_arg = DeclareLaunchArgument(
+        'dynamic_plots', default_value='true',
+        description='Live coverage-map rendering (false = render only at shutdown)')
+
+    # log_raw_contacts: 'true' -> ALSO write every raw contact-sensor message to
+    # contacts_raw.csv (chatty, ~90 rows per second while touching).  Default
+    # false: events.csv logs one CONTACT_BEGIN/CONTACT_END pair per episode.
+    log_raw_contacts_arg = DeclareLaunchArgument(
+        'log_raw_contacts', default_value='false',
+        description='Also write every raw contact message to contacts_raw.csv')
+
     leo_description = get_package_share_directory("leo_description")
 
     robots_to_spawn = []
@@ -48,6 +63,12 @@ def generate_launch_description():
             package="swarm_basics",
             executable="coverage_plotter",
             name="coverage_plotter",
+            parameters=[{
+                'dynamic_plots': ParameterValue(
+                    LaunchConfiguration('dynamic_plots'), value_type=bool),
+                'log_raw_contacts': ParameterValue(
+                    LaunchConfiguration('log_raw_contacts'), value_type=bool),
+            }],
             output="screen"
     )       
 
@@ -330,6 +351,8 @@ def generate_launch_description():
         detector_arg,
         enable_llm_arg,
         bt_arg,
+        dynamic_plots_arg,
+        log_raw_contacts_arg,
         run_mode_env,
         plot_node,
         social_logger_node,

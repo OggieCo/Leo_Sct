@@ -147,8 +147,12 @@ global_costmap:
           obstacle_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.35
+        # 2026-09-13: 3.0/0.35 -> 2.0/0.25.  The blocked halo around a peer
+        # robot (or human) used to reach ~0.65 m, so a rover parked 0.8-1.5 m
+        # away made NavFn fail to even START a plan (runs 13:57, 15:19).
+        # Shrinking the halo keeps the start cell plannable at those ranges.
+        cost_scaling_factor: 2.0
+        inflation_radius: 0.25
 
 # ===== Local Costmap (used by both planner and controller) =====
 local_costmap:

@@ -19,12 +19,14 @@ from nav2_msgs.action import NavigateToPose
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import OccupancyGrid, Odometry
+import csv
 import random
 import math
 import signal
 import time
 
 from swarm_basics.robot_config import ROBOT_POSITIONS, world_to_map
+from swarm_basics.run_utils import get_run_dir
 
 
 class RandomGoalPublisher(Node):
@@ -48,6 +50,14 @@ class RandomGoalPublisher(Node):
         # Per-robot state: action client, stop publisher, goal handle, busy
         # flag, current odom pose, and SLAM map known-fraction (phased goals).
         self.spawns = {ns: (x, y, yaw) for ns, x, y, yaw in ROBOT_POSITIONS}
+        # Eagerly join the launch's run folder (SWARM_RUN_ID from
+        # start_experiment.sh) — see fixed_goals.py: this node starts after
+        # the Nav2 readiness gate, so a lazy resolve would splinter
+        # goal_stats.csv into a second run_ folder.
+        try:
+            self._run_dir = get_run_dir()
+        except OSError:
+            self._run_dir = None   # fallback: retry on the first write
         self.robots = {}
         for ns, _, _, _ in ROBOT_POSITIONS:
             self.robots[ns] = {
@@ -59,6 +69,9 @@ class RandomGoalPublisher(Node):
                 'pose': None,      # (x, y, yaw) in {ns}/odom frame
                 'map_known': 0.0,  # known fraction of /{ns}/map
                 'phase2': False,   # True once full-arena goals are unlocked
+                # Goal-outcome counters -> goal_stats.csv (merged into
+                # summary.csv by coverage_plotter, works for all three arms).
+                'g_sent': 0, 'g_ok': 0, 'g_fail': 0, 'g_scan': 0,
             }
             # SLAM occupancy grid -> "have we scanned enough of the arena?"
             self.create_subscription(
@@ -118,6 +131,8 @@ class RandomGoalPublisher(Node):
         goal_msg.pose.pose.orientation.z = math.sin(myaw / 2.0)
 
         robot['busy'] = True
+        robot['g_sent'] += 1
+        self._write_goal_stats()
         self.get_logger().info(
             f'[{ns}] Sending goal: world ({x:.1f}, {y:.1f}) -> '
             f'map ({mx:.1f}, {my:.1f})')
@@ -203,6 +218,8 @@ class RandomGoalPublisher(Node):
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().warn(f'[{ns}] Goal rejected by Nav2 — retrying in 5s')
+            robot['g_fail'] += 1
+            self._write_goal_stats()
             robot['busy'] = False
             self._schedule(5.0, lambda: self.send_goal(ns))
             return
@@ -218,19 +235,49 @@ class RandomGoalPublisher(Node):
         robot['busy'] = False
         status = result.status
         if status == GoalStatus.STATUS_SUCCEEDED:
+            robot['g_ok'] += 1
+            self._write_goal_stats()
             self.get_logger().info(f'[{ns}] Goal reached — sending a new random goal')
             self._schedule(0.5, lambda: self.send_goal(ns))
         else:
+            robot['g_fail'] += 1
+            self._write_goal_stats()
             self.get_logger().warn(
                 f'[{ns}] Goal finished with status {status} (not SUCCEEDED) — '
                 f'retrying in 5s')
             self._schedule(5.0, lambda: self.send_goal(ns))
+
+    def _write_goal_stats(self):
+        """Per-robot goal outcomes -> <run_dir>/goal_stats.csv.
+
+        Same format as fixed_goals.py (scan_goals stays 0 here — random goals
+        have no forward-scan guard).  Rewritten on every change so a Ctrl-C
+        never loses the counts.
+        """
+        try:
+            if self._run_dir is None:
+                # Fallback if the eager resolve in __init__ failed: resolve
+                # ONCE per process (see fixed_goals.py) — a fresh
+                # get_run_dir() per write splinters one run across folders.
+                self._run_dir = get_run_dir()
+            path = self._run_dir / 'goal_stats.csv'
+            with open(path, 'w', newline='') as f:
+                w = csv.writer(f)
+                w.writerow(['robot_id', 'goals_sent', 'goals_succeeded',
+                            'goals_failed', 'scan_goals'])
+                for ns in self.robots:
+                    r = self.robots[ns]
+                    w.writerow([ns, r.get('g_sent', 0), r.get('g_ok', 0),
+                                r.get('g_fail', 0), r.get('g_scan', 0)])
+        except OSError as e:
+            self.get_logger().warn(f'could not write goal_stats.csv: {e}')
 
     def killswitch(self):
         """Stop every rover on shutdown: cancel active Nav2 goals and flush
         zero-velocity commands to Gazebo BEFORE rclpy tears down the context
         (publishing in destroy_node is too late)."""
         self.get_logger().info('Stopping robot(s)...')
+        self._write_goal_stats()   # final counts before the run folder closes
         for ns, robot in self.robots.items():
             # 1) cancel the active Nav2 goal so the controller stops commanding
             try:

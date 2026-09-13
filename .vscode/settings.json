@@ -34,6 +34,34 @@
             "approve": true,
             "matchCommandLine": true
         },
-        "./start_experiment.sh": true
+        "./start_experiment.sh": true,
+        "/^python3 -c \"import ast; ast\\.parse\\(open\\('/home/oggie/Documents/GitHub/Leo_Sct/swarm_basics/swarm_basics/coverage_plotter\\.py'\\)\\.read\\(\\)\\); print\\('syntax OK'\\)\" && docker exec humble_thesis_engine bash -lc 'source /opt/ros/humble/setup\\.bash && cd /root/ros2_ws && colcon build --packages-select swarm_basics 2>&1 \\| tail -2 && cd /root/ros2_ws/src/swarm_basics && source /root/ros2_ws/install/setup\\.bash && colcon build 2>&1 \\| tail -2 && echo \"--- SIG_IGN in installed copies:\" && grep -c \"SIG_IGN\" /root/ros2_ws/install/swarm_basics/lib/python3\\.10/site-packages/swarm_basics/coverage_plotter\\.py /root/ros2_ws/src/swarm_basics/install/swarm_basics/lib/python3\\.10/site-packages/swarm_basics/coverage_plotter\\.py'$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^bash -n /home/oggie/Documents/GitHub/Leo_Sct/swarm_basics/scripts/start_experiment\\.sh && echo \"syntax OK\" && bash /home/oggie/Documents/GitHub/Leo_Sct/swarm_basics/scripts/start_experiment\\.sh --help 2>&1 \\| grep -A1 \"dynamic-plots\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd /home/oggie/Documents/GitHub/Leo_Sct/swarm_basics && echo \"=== fixed_goals robot_2/3 present\\?:\" && grep -cn \"'robot_2'\\\\\\|'robot_3'\" swarm_basics/fixed_goals\\.py; echo \"=== generator: print-name / new build_robots / seed4 name:\" && grep -n \"print-name\\\\\\|def build_robots\\(spec\\)\\\\\\|4_rovers_3_humans_obstacles\\\\\\|spec\\\\\\['name'\\\\\\]\" worlds/scenario_generator\\.py \\| head -12; echo \"=== start_experiment SEED_NAME:\" && grep -n \"SEED_NAME\" scripts/start_experiment\\.sh \\| head -4; echo \"=== run_utils safe:\" && grep -n \"safe = \\\\\\|scenario-name\" swarm_basics/run_utils\\.py \\| head -4; echo \"=== generator syntax:\" && python3 -c \"import ast; ast\\.parse\\(open\\('worlds/scenario_generator\\.py'\\)\\.read\\(\\)\\); print\\('OK'\\)\" && echo \"=== start_experiment syntax:\" && bash -n scripts/start_experiment\\.sh && echo OK$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd /home/oggie/Documents/GitHub/Leo_Sct && g=swarm_basics/scripts/startup_logs/2026-09-13_11-53-15 && python3 - <<PY\nimport re\npat = re\\.compile\\(r\"\\(failed to create plan\\|Failed to make progress\\|Running spin\\|Running wait\\|Running backup\\|spin completed\\|wait completed\\|backup failed\\|backup completed\\|Goal failed\\|Aborting handle\\|Collision Ahead\\|Received a goal\\)\"\\)\nout = \\[\\]\nfor l in open\\('\\$g/nav2\\.log', errors='ignore'\\):\n    if \\('robot_0\\.' in l or 'robot_1\\.' in l\\) and pat\\.search\\(l\\):\n        out\\.append\\(l\\.rstrip\\(\\)\\[:160\\]\\)\nprint\\(f\"total matching lines: \\{len\\(out\\)\\}\"\\)\nprint\\(\"=== last 60:\"\\)\nfor l in out\\[-60:\\]:\n    print\\(l\\)\nPY$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd /home/oggie/Documents/GitHub/Leo_Sct && d=results/coverage_logs/Nav2/2_rovers_3_humans/run_2026-09-13_12-01-06 && g=swarm_basics/scripts/startup_logs/2026-09-13_12-01-02 && echo \"=== 'Failed to make progress' occurrences with context:\" && grep -n -B1 -A5 \"Failed to make progress\" \"\\$g/nav2\\.log\" \\| head -35 && echo && echo \"=== cmd during standoff \\(every 3s\\):\" && python3 - <<PY\nimport csv\nfor r in csv\\.DictReader\\(open\\('\\$d/social_state\\.csv'\\)\\):\n    t=float\\(r\\['elapsed_sec'\\]\\)\n    if 59 < t < 90 and abs\\(t%3-2\\)<0\\.6 and r\\['robot_id'\\] in \\('robot_0','robot_1'\\):\n        print\\(f\"t=\\{t:5\\.1f\\} \\{r\\['robot_id'\\]\\} cmd_lin=\\{float\\(r\\['cmd_lin'\\]\\):5\\.3f\\} cmd_ang=\\{float\\(r\\['cmd_ang'\\]\\):5\\.3f\\} speed=\\{float\\(r\\['actual_speed_kph'\\]\\):4\\.2f\\} back=\\{r\\['backwards'\\]\\}\"\\)\nPY\necho && echo \"=== bt mode handling in launch:\" && grep -n \"bt\\\\b\\\\\\|bt:=\\\\\\|behavior_tree\\\\\\|bt_xml\" swarm_basics/launch/nav2_slam_all\\.launch\\.py \\| head -20$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd /home/oggie/Documents/GitHub/Leo_Sct && d=results/coverage_logs/Nav2/2_rovers_3_humans/run_2026-09-13_12-23-27 && echo \"=== summary:\" && cat \\$d/summary\\.csv && echo && echo \"=== social_summary:\" && cat \\$d/social_summary\\.csv && echo && python3 - <<PY\nimport csv, collections\nrows=list\\(csv\\.DictReader\\(open\\('\\$d/events\\.csv'\\)\\)\\)\nbumps=collections\\.defaultdict\\(list\\)\ncontacts=collections\\.defaultdict\\(list\\)\nfor r in rows:\n    t=float\\(r\\['elapsed_sec'\\]\\)\n    if r\\['event_type'\\]=='BUMP': bumps\\[r\\['robot_id'\\]\\]\\.append\\(\\(t,r\\['details'\\]\\)\\)\n    elif r\\['event_type'\\]=='CONTACT': contacts\\[\\(r\\['robot_id'\\], r\\['details'\\]\\.split\\('::'\\)\\[0\\]\\)\\]\\.append\\(t\\)\nprint\\(\"=== BUMP events per robot \\(events\\.csv\\):\"\\)\nfor k,v in sorted\\(bumps\\.items\\(\\)\\):\n    ts=\\[t for t,_ in v\\]\n    print\\(f\"\\{k\\}: \\{len\\(v\\)\\} bumps  times: \" \\+ \", \"\\.join\\(f\"\\{t:\\.1f\\}\" for t in ts\\[:50\\]\\)\\)\nprint\\(\\)\nprint\\(\"=== CONTACT bursts \\(episodes = separated by >3s gaps\\):\"\\)\nfor k,ts in sorted\\(contacts\\.items\\(\\)\\):\n    ts\\.sort\\(\\)\n    eps=1; gaps=\\[\\]\n    for a,b in zip\\(ts, ts\\[1:\\]\\):\n        if b-a>3\\.0: eps\\+=1; gaps\\.append\\(b-a\\)\n    print\\(f\"\\{k\\[0\\]\\} <-> \\{k\\[1\\]\\}: \\{len\\(ts\\)\\} samples, \\{ts\\[0\\]:\\.1f\\}->\\{ts\\[-1\\]:\\.1f\\}s, episodes=\\{eps\\}, gaps>3s=\\{\\[f'\\{g:\\.1f\\}' for g in gaps\\]\\[:12\\]\\}\"\\)\nPY\necho && ls -dt swarm_basics/scripts/startup_logs/\\*/ \\| head -4$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd /home/oggie/Documents/GitHub/Leo_Sct && d=\\$\\(ls -dt results/coverage_logs/Nav2/2_rovers_3_humans/run_\\*/ \\| head -1\\) && echo \"run dir: \\$d\" && ls \"\\$d\" && echo && python3 - <<PY\nimport csv, collections\nrows=list\\(csv\\.DictReader\\(open\\('\\$d/events\\.csv'\\)\\)\\)\nc=collections\\.defaultdict\\(int\\)\nfor r in rows: c\\[\\(r\\['robot_id'\\], r\\['event_type'\\]\\)\\]\\+=1\nprint\\(\"=== event counts:\", dict\\(c\\), \" total rows:\", len\\(rows\\)\\)\nprint\\(\\)\nprint\\(\"=== CONTACT episode rows:\"\\)\nfor r in rows:\n    if r\\['event_type'\\] in \\('CONTACT_BEGIN','CONTACT_END'\\):\n        print\\(f\"  \\{float\\(r\\['elapsed_sec'\\]\\):7\\.1f\\}s \\{r\\['robot_id'\\]:8s\\} \\{r\\['event_type'\\]:14s\\} \\{r\\['details'\\]\\}\"\\)\nprint\\(\\)\nstart=\\[r for r in rows if r\\['event_type'\\]=='CONTACT_BEGIN'\\]\nbump=\\[r for r in rows if r\\['event_type'\\]=='BUMP'\\]\nprint\\(f\"CONTACT_BEGIN: \\{len\\(start\\)\\}   BUMP rows: \\{len\\(bump\\)\\}   \\(expect equal, per robot\\)\"\\)\nPY\necho && echo \"=== summary\\.csv:\" && cat \"\\$d/summary\\.csv\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }

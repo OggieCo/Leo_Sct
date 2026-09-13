@@ -169,8 +169,11 @@ class LlmPlanner(Node):
         # deceleration + a closer approach) instead of an abrupt full stop at
         # the 2.4 m proximity trigger (run_2026-08-24_14-42-57: robot_0
         # slammed to a stop at 2.2 m separation).  The full stop commits only
-        # at the yield point.
-        self._yield_stop_dist = 1.75
+        # at the yield point.  1.75 -> 1.5 m (run_2026-09-13_14-31-35:
+        # rovers stood ~1.6-2.1 m apart at the yield point — "stops a bit
+        # more away than needed"; the C++ hold-cone release and cleared()
+        # gates are bearing-based, so this only moves the stand closer).
+        self._yield_stop_dist = 1.5
         # Back-up safety distance (m): when another robot gets this close and
         # is ahead, an arc or a stop can collide.  Backing is reserved for a
         # GENUINE DEADLOCK (both robots stuck) — backing during an active
@@ -178,24 +181,51 @@ class LlmPlanner(Node):
         self._back_dist = 1.2
         # Minimum free distance BEHIND (m, lidar rear sector) required before
         # the robot is allowed to reverse — never back into something.
-        self._back_clear_dist = 0.9
+        # 0.9 -> 0.7 m (2026-09-13): back offs must be able to fire while a
+        # peer/human hovers at the edge of the rear sector; the BT re-checks
+        # the sector every tick during the reverse.
+        self._back_clear_dist = 0.7
         # Deadlock confirmation window (s): the other robot must have been
         # stalled ahead for this long AND we must be stopped too before the
         # robot is allowed to reverse.
         self._back_deadlock_s = 2.0
         # Human slowdown range (matches velocity_adaptor d_slow): beyond this
         # the human is not a conflict; within it AND approaching -> hold.
-        self._human_slow_dist = 2.5
+        # TOLERANCE PASS (run_2026-09-13_13-23-21): 2.5 -> 2.0 -> 1.5 m
+        # (user request 2026-09-13) — the human layer only engages inside
+        # 1.5 m, matching the YOLO human_close range; robots keep their own
+        # _yield_stop_dist (1.5 m).  The rover creeps past people with
+        # "slow" instead of treating every seen human as a conflict.
+        self._human_slow_dist = 1.5
+        self._human_stop_dist = 1.0      # m; human layer stops only inside this
+        # BACK AWAY from a DANGEROUSLY close human (2026-09-13: 10-18 s presses
+        # against human_*_bumper actors).  Inside _human_back_dist, with the
+        # rear clear, reverse slowly (BT "back" -> IsRearClear + BackUp 0.6 m
+        # @ 0.3 m/s) instead of standing pressed against the person.  Rear
+        # gate first: with something behind we hold exactly as before; the
+        # cooldown spaces retreats and lets the normal layers resume once the
+        # person has room again.
+        self._human_back_dist = 0.7       # m; inside this -> back off
+        self._human_back_angle = 70.0     # deg; only for a human in FRONT of us
+        self._human_back_cool_s = 3.0     # s between back-off attempts
+        self._last_human_back_t = 0.0
+        self._last_human_back_logt = 0.0  # throttle for "blocked" diagnostics
+        # BACK COMMIT (run_2026-09-13_16-46-49): the retreat was canceled a
+        # tick after it started (the human-hold branch re-asserted yield), so
+        # the rover never actually rolled backwards.  Once triggered, "back"
+        # owns the action until this deadline (0.6 m at 0.3 m/s ~= 2 s).
+        self._back_hold_s = 2.2
+        self._back_until = 0.0
         # Human pass-around (short wait, then drive around instead of a long
         # yield): a STATIONARY human off to the side (|bearing| > min_deg) is
         # not a hard conflict — after a brief grace wait we choose "slow" and
         # let Nav2's DWB curve around it, instead of holding until it leaves
         # the corridor.  Never pass a human still approaching our path (range
         # rate < -0.05) or with too little lateral room to slip by.
-        self._human_pass_min_deg = 10.0   # |bearing| must exceed this (deg)
+        self._human_pass_min_deg = 8.0    # |bearing| must exceed this (deg)
         self._human_pass_max_deg = 85.0   # beyond this we are beside/behind
-        self._human_pass_wait = 1.5       # s of "stationary off to the side"
-        self._human_pass_lat = 0.4        # min lateral gap to slip by (m)
+        self._human_pass_wait = 0.8       # s of "stationary off to the side"
+        self._human_pass_lat = 0.3        # min lateral gap to slip by (m)
         self._human_pass_since = 0.0      # when the pass candidate appeared
         # Right-of-way tie-break: bearings in this frontal band (other robot
         # ahead, slightly to our left) are an ambiguous oblique approach —
@@ -209,6 +239,10 @@ class LlmPlanner(Node):
         self._row_opp_deg = 30.0
         self._yield_started_t = 0.0  # when the current yield action began
         self._stall_since = 0.0      # how long the other robot has stalled ahead
+        # Mutual-block fallback (see _commit_mutual_block): both robots
+        # stopped close to each other with no concrete way/yield pair — the
+        # timestamp of when that condition began.
+        self._mutual_block_since = 0.0
         # Timed escape: even a robot that creeps just fast enough to evade the
         # stall detector must not block us forever, so after this many seconds
         # committed to the yield ROLE (other still in front) we force an arc
@@ -226,6 +260,28 @@ class LlmPlanner(Node):
         self._dist_prev = None       # previous other-robot range (range-rate)
         self._dist_prev_t = 0.0
         self._range_rate = 0.0       # + = other robot moving away
+
+        # --- arc commit: ONE-SHOT, sticky smooth-avoidance maneuver --------
+        # (run_2026-09-13_13-05-24: the arc maneuver left the whole encounter
+        #  and then the planner toggled proceed<->arc every 0.5-1.5 s — while
+        #  WE turn, the bearing to the other robot grows and _yield_cleared()
+        #  falsely read "cleared" — so the BT halted and re-started the Arc
+        #  node every tick instead of letting one turn finish, and the pair
+        #  froze at ~1 m.)  A committed arc OWNS the action until the pass is
+        #  genuinely over (DISTANCE-based clear, not bearing), the hard cap
+        #  elapses, or a human comes close; afterwards a cooldown blocks the
+        #  next arc so attempts can never chain into a sub-second restart
+        #  loop.  0.0-cooldown / empty action = the previous behaviour.
+        self._arc_action = ""            # "arc_left"/"arc_right" while committed
+        self._arc_commit_start = 0.0     # when this maneuver was committed
+        self._arc_until = 0.0            # ownership deadline (extendable)
+        self._arc_hold_s = 4.5           # base ownership (arcs run ~3-5 s)
+        self._arc_hard_s = 6.5           # absolute cap incl. extensions
+        self._arc_min_s = 3.5            # no self-release before this (see below)
+        self._arc_cool_until = 0.0       # no NEW arc before this time
+        self._arc_cool_s = 2.0           # spacing between arc attempts
+        self._arc_clear_since = 0.0      # debounce for the distance-based clear
+        self._arc_clear_dist = 2.4       # m; pass considered over at/above this
 
         # --- CSV usage logging (same run folder as coverage/social) ---
         self._start_time = time.time()
@@ -286,6 +342,12 @@ class LlmPlanner(Node):
         self._pub_action = self.create_publisher(String, "llm_action", 10)
         self._pub_reason = self.create_publisher(String, "llm_reason", 10)
         self._pub_speed_scale = self.create_publisher(Float32, "llm_speed_scale", 10)
+        # Maneuver speed floor for velocity_adaptor (0 = no floor): keeps an
+        # active arc / right-of-way holder from being strangled by the robot
+        # proximity brake (see _arc_tick_update; velocity_adaptor applies it
+        # as max(robot_term, floor)).  Only llm_planner publishes this, so the
+        # pure-BT and Nav2 arms keep their exact previous driving behaviour.
+        self._pub_floor = self.create_publisher(Float32, "social_speed_floor", 10)
 
         # --- event-driven ticker ---
         self.create_timer(1.0 / self.get_parameter("tick_hz").value, self._tick)
@@ -547,6 +609,91 @@ class LlmPlanner(Node):
                 self.get_logger().info(
                     f'[{self.ns}] ROW {final} (coordinated: {note})')
 
+    def _commit_mutual_block(self):
+        """Deterministic ROW assignment when a genuine MUTUAL BLOCK forms.
+
+        If both robots sit stopped (< 0.05 m/s each) inside proximity range
+        for >= 2 s and no concrete way/yield pair exists — nothing was
+        committed, or the symmetric "headon" (both-arc) commit never unstuck
+        the pair — assign the pair deterministically, with PRIORITY TO THE
+        RIGHT:
+
+          * other robot clearly on MY RIGHT (bearing < -band) -> I YIELD
+            (the robot on the right has the way),
+          * other robot clearly on MY LEFT  (bearing > +band) -> I get WAY
+            (I am on the other robot's right),
+          * head-on / mirror-symmetric geometry (both robots see the other
+            on the same side) -> id tie-break: the smaller numeric id gets
+            the way, so the pair always ends up split exactly one way /
+            one yield.
+
+        Peer commitments on /social/row_commit are respected first: a fresh
+        "way" from the other robot makes us commit "yield" and vice versa;
+        if BOTH ended up yielded, the smaller id switches to "way" so the
+        pair cannot deadlock in a mutual yield (a simultaneous mutual WAY is
+        still repaired by _cb_row_commit).  LLM-layer only - the pure-BT and
+        stock-Nav2 conditions are untouched.
+        """
+        now = time.time()
+        if (not self._robot_close or self._own_speed >= 0.05
+                or self._other_speed >= 0.05):
+            self._mutual_block_since = 0.0
+            return
+        if self._mutual_block_since == 0.0:
+            self._mutual_block_since = now
+            return
+        if now - self._mutual_block_since < 2.0:
+            return
+
+        peer = self._row_commits.get(self._robot_id)
+        peer_row = (peer[0] if peer and (now - peer[1]) <= self._row_commit_ttl
+                    else None)
+        a = self._robot_angle
+        row = None
+        why = ""
+        if self._row == "way" and not (
+                peer_row == "way"
+                and self._id_num(self.ns) < self._id_num(self._robot_id)):
+            return          # we already hold the way (alone)
+        if self._row == "way":
+            row, why = "yield", "mutual way - smaller id yields"
+        elif peer_row == "way":
+            if self._row == "yield":
+                return      # already yielding to its way
+            row, why = "yield", f"{self._robot_id} has the way (peer commit)"
+        elif peer_row == "yield" and self._row != "yield":
+            row, why = "way", f"{self._robot_id} yields (peer commit) - I proceed"
+        elif peer_row == "yield" and self._row == "yield":
+            if self._id_num(self.ns) < self._id_num(self._robot_id):
+                row, why = "way", "both yielded - smaller id takes the way"
+            else:
+                return      # the smaller id breaks the mutual yield
+        elif self._row == "yield":
+            return          # we already yield; the timed escape handles a stall
+        else:
+            # row is None or a stalled "headon" and the peer is silent ->
+            # geometry rule (priority to the right).
+            head_on_like = self._robot_opposition_deg <= self._row_opp_deg
+            if head_on_like or abs(a) <= self._row_front_deg:
+                row = ("way"
+                       if self._id_num(self.ns) < self._id_num(self._robot_id)
+                       else "yield")
+                why = (f"head-on/mirror geometry ({a:+.0f} deg) - "
+                       "smaller id gets the way")
+            elif a < 0.0:
+                row, why = "yield", (f"other on my right ({a:+.0f} deg) - "
+                                     "give way to the right")
+            else:
+                row, why = "way", (f"other on my left ({a:+.0f} deg) - "
+                                   "I am on its right, keep the way")
+        if row is None:
+            return
+        stalled = now - self._mutual_block_since
+        self._coord_note = f"mutual block {stalled:.1f}s - {why}"
+        self._set_row(row)
+        self.get_logger().info(
+            f'[{self.ns}] ROW {row} (mutual-block fallback: {why})')
+
     def _update_stall(self):
         """Track how long the other robot has been GENUINELY stalled directly
         ahead: low speed AND a static bearing (it is not sweeping past).
@@ -626,6 +773,116 @@ class LlmPlanner(Node):
         lat = self._robot_dist * math.sin(math.radians(self._robot_angle))
         return self._range_rate > 0.05 and abs(lat) > 0.8
 
+    # --- arc commit (one-shot sticky maneuver) -----------------------------
+    def _arc_active(self):
+        """Own an arc maneuver right now (action locked to arc_*)?"""
+        return bool(self._arc_action) and time.time() < self._arc_until
+
+    def _start_arc_commit(self, action):
+        """Take ownership of a smooth-avoidance arc (called wherever an arc
+        action is chosen).  Returns False when the post-arc cooldown blocks
+        the attempt, so callers fall back to their non-arc branch instead of
+        chaining restarts (one-shot semantics)."""
+        now = time.time()
+        if now < self._arc_cool_until:
+            return False
+        if not self._arc_active() or self._arc_action != action:
+            self._arc_commit_start = now
+        self._arc_action = action
+        self._arc_until = min(now + self._arc_hold_s,
+                              self._arc_commit_start + self._arc_hard_s)
+        self._arc_clear_since = 0.0
+        return True
+
+    def _end_arc_commit(self, cool_s=None):
+        """Release the arc ownership and start the post-arc cooldown."""
+        if self._arc_action:
+            held = time.time() - self._arc_commit_start
+            self.get_logger().info(
+                f"[{self.ns}] arc commit {self._arc_action} finished "
+                f"(owned {held:.1f} s)")
+        self._arc_action = ""
+        self._arc_until = 0.0
+        self._arc_cool_until = time.time() + (
+            self._arc_cool_s if cool_s is None else cool_s)
+        self._arc_clear_since = 0.0
+
+    def _arc_cleared(self):
+        """DISTANCE-based pass-clear test for a committed arc.
+
+        The BEARING is not usable while WE are turning (that was the root
+        cause of run_2026-09-13_13-05-24: mid-maneuver the bearing sweeps
+        past 50 deg and _yield_cleared() read "cleared", the planner flipped
+        back to proceed, the BT halted the Arc node, the robot straightened,
+        the bearing shrank, the arc came back — a 0.5-1.5 s limit cycle).
+        A human coming close also ends the maneuver (safety first)."""
+        if self._human_close:
+            return True
+        # MIN OWNERSHIP (run_2026-09-13_13-31-19: an arc_right commit was
+        # "finished (owned 1.0 s)" — the pass briefly read as clear while the
+        # turn was only 1 s old, the action flipped to proceed and the BT
+        # halted the arc mid-maneuver.  run_2026-09-13_13-49-07: a 0.61 rad
+        # arc needs ~2.4 s + start latency and was released at ~2.5 s — it
+        # never logged "Arc complete".)  A distance-clear may not release the
+        # maneuver before it has had time to execute; the hard cap and a
+        # human still end it regardless.
+        if time.time() - self._arc_commit_start < self._arc_min_s:
+            return False
+        cleared = (self._robot_dist > self._arc_clear_dist or
+                   (not self._robot_close and self._robot_dist > 1.8))
+        now = time.time()
+        if cleared:
+            if self._arc_clear_since == 0.0:
+                self._arc_clear_since = now
+            return now - self._arc_clear_since >= 0.5
+        self._arc_clear_since = 0.0
+        return False
+
+    def _arc_tick_update(self):
+        """Per-tick arc-commit housekeeping: distance-release, extension
+        while the encounter is still unresolved, hard-cap expiry, and the
+        maneuver speed floor broadcast."""
+        now = time.time()
+        if self._arc_action:
+            if self._arc_cleared():
+                if self._human_close:
+                    self._end_arc_commit()          # safety abort
+                    if self._last_action in ("arc_left", "arc_right"):
+                        self._last_action = "stop"
+                        self._last_reason = ("human close — arc maneuver "
+                                             "aborted, holding")
+                        self._publish()
+                else:
+                    self._end_arc_commit(cool_s=1.0)  # cleared -> quick resume
+                    if self._last_action != "proceed":
+                        self._last_action = "proceed"
+                        self._last_reason = "arc complete — pass cleared"
+                        self._det_released = True
+                        self._publish()
+            elif now >= self._arc_until:
+                if now < self._arc_commit_start + self._arc_hard_s:
+                    # still blocked -> keep turning (never past the hard cap)
+                    self._arc_until = min(now + 1.0,
+                                          self._arc_commit_start + self._arc_hard_s)
+                else:
+                    self._end_arc_commit()          # hard cap — hand back control
+        # SPEED FLOOR (velocity_adaptor, 0 = no floor): a maneuver needs
+        # motion to produce separation, and the right-of-way holder must not
+        # be strangled by the proximity brake while its peer is committed to
+        # yield.  Everything else keeps floor 0 -> previous behaviour.
+        floor = 0.0
+        if self._arc_active():
+            floor = 0.55
+        elif self._row == "way":
+            peer = self._row_commits.get(self._robot_id)
+            if (peer and peer[0] == "yield" and
+                    now - peer[1] <= self._row_commit_ttl and
+                    self._robot_dist > 1.0 and abs(self._robot_angle) <= 45.0):
+                floor = 0.55
+        fs = Float32()
+        fs.data = float(floor)
+        self._pub_floor.publish(fs)
+
     def _human_cleared(self):
         """DETERMINISTIC human release — adaptive to ANY human geometry.
 
@@ -635,18 +892,25 @@ class LlmPlanner(Node):
         human's walking line).  Release if ANY:
           (a) the human is no longer detected for a 1.5 s debounce (noisy
               detector / walked away / out of view),
-          (b) the human is behind the robot (bearing magnitude > 90 deg),
-          (c) the human is > 1.2 m laterally off the robot's heading line and
+          (b) the human is behind the robot (bearing magnitude > 80 deg),
+          (c) the human is > 0.9 m laterally off the robot's heading line and
               not actively closing on it (range rate > -0.1) — it has passed
               the closest approach, safe to cross behind it.
+        (Tolerance pass 2026-09-13: (b) 90->80 deg, (c) 1.2->0.9 m — resume
+        sooner once a human is clearly to the side or behind.)
         """
         if not self._human_det:
             if self._human_gone_since == 0.0:
                 self._human_gone_since = time.time()
-            return time.time() - self._human_gone_since >= 1.0
+            # 1.0 -> 1.5 s (run_2026-09-13_14-23-26: the release fired during a
+            # short detection dropout and the rover accelerated from a creep
+            # straight into the person beside it).
+            return time.time() - self._human_gone_since >= 1.5
+        if self._human_dist < 0.0:
+            return True                      # no range -> no human (ghost guard)
         self._human_gone_since = 0.0
-        if abs(self._human_angle) > 90.0:
-            return True                       # human behind us
+        if abs(self._human_angle) > 80.0:
+            return True                       # human beside/behind us
         rr, _ = self._human_motion()
         # Slowdown-range + approach gate: a human beyond the slowdown range or
         # not actually closing is NOT a conflict (run_2026-08-25_13-33-27: a
@@ -657,7 +921,7 @@ class LlmPlanner(Node):
                 (self._human_dist > self._human_slow_dist or rr >= -0.05)):
             return True
         lat = self._human_dist * math.sin(math.radians(self._human_angle))
-        return abs(lat) > 1.2 and rr > -0.1
+        return abs(lat) > 0.9 and rr > -0.1
 
     def _human_passable(self):
         """Can we drive AROUND this human instead of holding?
@@ -700,13 +964,17 @@ class LlmPlanner(Node):
 
     def _tick(self):
         self._update_row()
+        self._commit_mutual_block()
         self._update_stall()
         # Share our own human-hold state (4 Hz, cheap): tells the OTHER robot
         # we are stopped for a human so it must not stall-escape into us.
         self._publish_human_hold()
+        # Arc-commit housekeeping + the maneuver speed floor broadcast.
+        self._arc_tick_update()
         # Deterministic release: don't wait for the LLM/cooldown once the
         # pass has clearly cleared.
         if (self._row == "yield" and self._yield_cleared() and
+                not self._arc_active() and
                 self._last_action != "proceed"):
             self._last_action = "proceed"
             self._last_reason = "pass cleared — resuming (deterministic release)"
@@ -718,7 +986,8 @@ class LlmPlanner(Node):
         # The full "yield" stop commits only at the yield point, so the robot
         # no longer halts 2 m before the crossing.  A genuinely stalled other
         # robot is skipped so the stall-escape arc still works.
-        if self._row == "yield" and not self._yield_cleared():
+        if (self._row == "yield" and not self._yield_cleared() and
+                not self._arc_active()):
             if self._yield_stuck():
                 # FORCED ESCAPE (deterministic): once the pass is stuck (genuine
                 # stall OR >= _yield_max_s with the other still in front), publish
@@ -726,11 +995,15 @@ class LlmPlanner(Node):
                 # wait for (or let) the LLM/guard override it back to yield
                 # (run_2026-08-29_13-49-53: ~2 min livelock).
                 if self._last_action not in ("arc_left", "arc_right"):
-                    self._last_action = ("arc_left" if self._free_left >= self._free_right
-                                         else "arc_right")
-                    self._last_reason = ("stall escape: other robot still "
-                                         "blocking after yield, going around")
-                    self._publish()
+                    cand = ("arc_left" if self._free_left >= self._free_right
+                            else "arc_right")
+                    # One-shot: the cooldown gate prevents restarts chaining
+                    # into the 0.5-1.5 s limit cycle of 2026-09-13_13-05-24.
+                    if self._start_arc_commit(cand):
+                        self._last_action = cand
+                        self._last_reason = ("stall escape: other robot still "
+                                             "blocking after yield, going around")
+                        self._publish()
             else:
                 if (self._robot_dist > self._yield_stop_dist and
                         self._own_speed > 0.05):
@@ -743,6 +1016,17 @@ class LlmPlanner(Node):
                     self._last_action = "yield"
                     self._last_reason = "yield — stopped at the yield point"
                     self._publish()
+        # NO ROBOT SLOWDOWN BEYOND +/-60 deg (2026-09-13): the adaptor's robot
+        # term already ignores rovers beside/behind us (|bearing| > 60), but
+        # the LLM's own "slow" kept paying a tax for them.  Enforce it here —
+        # unless a HUMAN is the reason (detected and not yet cleared).
+        if (self._last_action == "slow" and self._robot_close and
+                abs(self._robot_angle) > 60.0 and
+                not (self._human_det and not self._human_cleared())):
+            self._last_action = "proceed"
+            self._last_reason = ("robot beside/behind (>60 deg) — "
+                                 "resuming full speed")
+            self._publish()
         # HUMAN deterministic hold/pass/release (every tick — the LLM alone
         # dithers in 'slow' with no resolution and the robot froze on the
         # human's walking line, run_2026-08-24_16-13-56).  Humans always have
@@ -750,10 +1034,21 @@ class LlmPlanner(Node):
         # clearly out of the way (any geometry — see _human_cleared), resume.
         # NEW: a STATIONARY human off to the side (> _human_pass_min_deg) is
         # passed around after a short grace wait instead of a long yield.
-        # Skipped during an active robot yield (the robot logic owns that).
-        if self._human_det and self._row != "yield":
+        # Skipped during an active robot yield (the robot logic owns that) and
+        # during a committed arc maneuver: a merely DETECTED (not close)
+        # human must not cancel a turn already in flight — a human actually
+        # within _human_close aborts the arc inside _arc_cleared() instead.
+        if (self._human_det and self._row != "yield"
+                and not self._arc_active()):
             if self._human_cleared():
-                if self._last_action in ("slow", "yield"):
+                # "stop" is released too — an LLM "stop" for a human that has
+                # already cleared kept the rover parked until the next LLM
+                # call ~2.5 s later (run_2026-09-13_14-23-26: the other half
+                # of the stop-go rhythm) — unless a robot is actually blocking.
+                blocked = (self._robot_close
+                           and abs(self._robot_angle) <= 60.0)
+                if (self._last_action in ("slow", "yield", "stop")
+                        and not blocked):
                     self._last_action = "proceed"
                     self._last_reason = ("human has cleared — resuming "
                                          "(deterministic release)")
@@ -765,7 +1060,7 @@ class LlmPlanner(Node):
                                          "passing around it")
                     self._publish()
             else:
-                if (self._human_dist > self._yield_stop_dist and
+                if (self._human_dist > self._human_stop_dist and
                         self._own_speed > 0.05):
                     if self._last_action != "slow":
                         self._last_action = "slow"
@@ -777,14 +1072,42 @@ class LlmPlanner(Node):
                     self._last_reason = ("human close ahead — holding "
                                          "until it clears")
                     self._publish()
+        # HUMAN BACK-OFF (independent of the human-hold branch and of the
+        # robot ROW state): a person inside _human_back_dist is dangerously
+        # close — retreat 0.6 m via the BT "back" action (IsRearClear +
+        # BackUp 0.3 m/s) as soon as the rear is clear, then normal layers
+        # resume.  run_2026-09-13_15-04-33: a human walked THROUGH robot_0 at
+        # 0.62-0.68 m and it never retreated, because this check used to sit
+        # inside the hold branch and an upstream gate skipped it.
+        if (self._human_det and not self._arc_active() and
+                0.0 <= self._human_dist <= self._human_back_dist and
+                abs(self._human_angle) <= self._human_back_angle):
+            now_b = time.time()
+            if not self._back_clear():
+                if now_b - self._last_human_back_logt >= 2.0:
+                    self._last_human_back_logt = now_b
+                    self.get_logger().info(
+                        f"[{self.ns}] human at {self._human_dist:.2f} m — "
+                        "back-off blocked (rear not clear)")
+            elif now_b - self._last_human_back_t >= self._human_back_cool_s:
+                self._last_human_back_t = now_b
+                self._back_until = now_b + self._back_hold_s
+                if self._last_action != "back":
+                    self._last_action = "back"
+                    self._last_reason = ("human dangerously close — "
+                                         "backing off to give space")
+                    self._publish()
         # DEADLOCK BACK-UP (deterministic, LAST): reverse only on a GENUINE
         # deadlock — the other robot has been stalled ahead for >=
         # _back_deadlock_s AND we are also stopped.  Backing while the other
         # robot is actively passing disrupts the give-way (run_2026-08-29_
         # 15-43-12: repeated backs at ~1.2 m during a normal pass).  If it is
         # close but the other robot is still moving, just HOLD (stop).
+        # SKIPPED during a committed arc: the "too close -> stop" override
+        # cancelled the escape arc mid-maneuver at ~1.2 m and both rovers
+        # froze (run_2026-09-13_13-05-24) — the arc maneuver needs the wheel.
         if (self._robot_close and self._robot_dist <= self._back_dist and
-                abs(self._robot_angle) <= 60.0):
+                abs(self._robot_angle) <= 60.0 and not self._arc_active()):
             now = time.time()
             deadlock = (self._own_speed < 0.1 and
                         bool(self._stall_since) and
@@ -800,10 +1123,24 @@ class LlmPlanner(Node):
                 self._last_reason = ("robot too close ahead — holding "
                                      "(back only for deadlocks)")
                 self._publish()
+        # BACK COMMIT (last word in the tick): while a human back-off is in
+        # flight, nothing else may cancel the retreat — the BT halts BackUp
+        # the moment the action changes (run_2026-09-13_16-46-49).
+        if time.time() < self._back_until and self._last_action != "back":
+            self._last_action = "back"
+            self._last_reason = "human back-off — completing the retreat"
+            self._publish()
         sig = self._signature()
         changed = sig != self._last_signature
         self._last_signature = sig
         something = self._robot_close or self._human_det
+
+        # ARC COMMIT: no LLM call while our own maneuver is executing and the
+        # pass has not cleared — the action is already decided (finish the
+        # turn) and a fresh "stop"/"yield" answer is exactly what used to
+        # cancel it mid-maneuver.
+        if self._arc_active() and not self._arc_cleared():
+            return
 
         if not something:
             # Path clear -> no API call.  Default to proceed.
@@ -945,10 +1282,15 @@ class LlmPlanner(Node):
                 action = "yield"
                 reason = "staying yielded — the other robot is still passing"
             elif action not in ("arc_left", "arc_right") and stuck:
-                action = ("arc_left" if self._free_left >= self._free_right
-                          else "arc_right")
-                reason = ("stall escape: other robot still blocking after "
-                          "yield, going around")
+                cand = ("arc_left" if self._free_left >= self._free_right
+                        else "arc_right")
+                if self._start_arc_commit(cand):
+                    action = cand
+                    reason = ("stall escape: other robot still blocking after "
+                              "yield, going around")
+                else:
+                    action = "yield"
+                    reason = "staying yielded — arc maneuver cooling down"
 
         # TWO-STAGE YIELD: keep a fresh LLM decision from undoing the
         # slow-approach — same mapping as the deterministic controller in _tick
@@ -985,7 +1327,11 @@ class LlmPlanner(Node):
         # yield.  Skipped during an active robot yield.
         if self._human_det and self._row != "yield":
             if self._human_cleared():
-                if action in ("slow", "yield"):
+                # Same as the tick path: a cleared human releases "stop" too,
+                # unless a robot is genuinely blocking ahead.
+                blocked = (self._robot_close
+                           and abs(self._robot_angle) <= 60.0)
+                if action in ("slow", "yield", "stop") and not blocked:
                     action = "proceed"
                     reason = ("human has cleared — resuming "
                               "(deterministic release)")
@@ -994,13 +1340,35 @@ class LlmPlanner(Node):
                 reason = ("human stationary off to the side — "
                           "passing around it")
             else:
-                if self._human_dist > self._yield_stop_dist and \
+                if self._human_dist > self._human_stop_dist and \
                         self._own_speed > 0.05:
                     action = "slow"
                     reason = "human ahead — decelerating toward the hold point"
                 else:
                     action = "yield"
                     reason = "human close ahead — holding until it clears"
+
+        # HUMAN BACK-OFF (mirror of the tick path; runs even while a robot
+        # ROW role is active — a person at arm's length outranks politeness
+        # to a rover).
+        if (self._human_det and not self._arc_active() and
+                0.0 <= self._human_dist <= self._human_back_dist and
+                abs(self._human_angle) <= self._human_back_angle and
+                self._back_clear() and
+                time.time() - self._last_human_back_t >=
+                self._human_back_cool_s):
+            self._last_human_back_t = time.time()
+            self._back_until = self._last_human_back_t + self._back_hold_s
+            action = "back"
+            reason = "human dangerously close — backing off to give space"
+
+        # NO ROBOT SLOWDOWN BEYOND +/-60 deg (see the tick path): a rover
+        # beside/behind never keeps us slowed down — a human still can.
+        if (action == "slow" and self._robot_close and
+                abs(self._robot_angle) > 60.0 and
+                not (self._human_det and not self._human_cleared())):
+            action = "proceed"
+            reason = "robot beside/behind (>60 deg) — no slowdown"
 
         # DEADLOCK BACK-UP (deterministic, LAST — overrides the LLM and the
         # human layer): reverse only on a genuine deadlock; otherwise hold.
@@ -1016,6 +1384,31 @@ class LlmPlanner(Node):
             else:
                 action = "stop"
                 reason = "robot too close ahead — holding (back only for deadlocks)"
+
+        # ARC COMMIT (FINAL override — after every guard above): a committed
+        # one-shot arc owns the action until the pass is genuinely over
+        # (distance-based, see _arc_cleared), the hard cap elapses, or a human
+        # comes close.  Without this the deadlock/hold layer (or a fresh
+        # "stop" from the LLM) cancelled the arc ~1 s into the maneuver and
+        # the rovers froze (run_2026-09-13_13-05-24).
+        if self._arc_active() and not self._arc_cleared():
+            if self._human_close:
+                self._end_arc_commit()
+            else:
+                action = self._arc_action
+                reason = "arc commit — finishing the maneuver (pass not cleared)"
+        elif action in ("arc_left", "arc_right"):
+            if self._start_arc_commit(action):
+                reason = f"{reason} [arc committed — will run to completion]"
+            else:
+                action = "proceed"
+                reason = "arc cooling down — proceeding while the pass settles"
+
+        # BACK COMMIT (final): a human back-off in flight is not cancelable by
+        # the guards above either (see the tick path).
+        if time.time() < self._back_until:
+            action = "back"
+            reason = "human back-off — completing the retreat"
 
         self._last_action = action
         self._last_reason = reason
@@ -1120,9 +1513,14 @@ class LlmPlanner(Node):
         r = String(); r.data = self._last_reason
         self._pub_action.publish(a)
         self._pub_reason.publish(r)
-        # LLM soft speed cap (consumed by velocity_adaptor)
+        # LLM soft speed cap (consumed by velocity_adaptor).  "slow" is a
+        # cautious creep, not a near-stop: 0.4 made the approach to every
+        # human feel like a stall (tolerance pass 2026-09-13 -> 0.55 -> 0.65
+        # after run_2026-09-13_13-31-19: quicker, more confident flow; the
+        # hard stops (yield/stop = 0.0) and the adaptor's 0.35 m zero are
+        # unchanged, so only the creep speed goes up).
         if self._last_action == "slow":
-            scale = 0.4
+            scale = 0.65
         elif self._last_action in ("arc_left", "arc_right"):
             scale = 0.3
         elif self._last_action in ("yield", "stop"):

@@ -1,0 +1,70 @@
+{
+  "scenario": "3_rovers_3_humans",
+  "scenario_no": 9,
+  "world": "human_world",
+  "robots": [
+    [
+      "robot_0",
+      -4.5,
+      -4.5,
+      0.7854
+    ],
+    [
+      "robot_1",
+      4.5,
+      -4.5,
+      2.3562
+    ],
+    [
+      "robot_2",
+      -4.5,
+      4.5,
+      -0.7854
+    ]
+  ],
+  "humans": [
+    {
+      "name": "human_1",
+      "waypoints": [
+        [
+          -3.5,
+          -2.0
+        ],
+        [
+          -3.5,
+          2.0
+        ]
+      ],
+      "delay": 1.0
+    },
+    {
+      "name": "human_2",
+      "waypoints": [
+        [
+          3.5,
+          -2.0
+        ],
+        [
+          3.5,
+          2.0
+        ]
+      ],
+      "delay": 6.0
+    },
+    {
+      "name": "human_3",
+      "waypoints": [
+        [
+          -1.5,
+          3.0
+        ],
+        [
+          1.5,
+          3.0
+        ]
+      ],
+      "delay": 11.0
+    }
+  ],
+  "obstacles": []
+}

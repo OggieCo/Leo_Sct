@@ -15,12 +15,28 @@ from collections import defaultdict
 import csv
 import time
 import math
+import signal
 from pathlib import Path
 
 
 class CoveragePlotter(Node):
     def __init__(self):
         super().__init__('coverage_plotter')
+
+        # dynamic_plots=false: skip the periodic redraw/PNG/CSV-refresh timer
+        # entirely.  Trajectories/events CSVs are still written continuously;
+        # the coverage map + summary/coverage CSVs are rendered once, in
+        # save_final_plot() at shutdown.
+        self.declare_parameter('dynamic_plots', True)
+        self.dynamic_plots = bool(self.get_parameter('dynamic_plots').value)
+
+        # log_raw_contacts=true: ALSO write every raw contact-sensor message to
+        # contacts_raw.csv (very chatty: ~90 rows/s while touching).  Default
+        # false: events.csv keeps one CONTACT_BEGIN/CONTACT_END row pair per
+        # contact episode, so duration + sample counts are preserved.
+        self.declare_parameter('log_raw_contacts', False)
+        self.log_raw_contacts = bool(
+            self.get_parameter('log_raw_contacts').value)
 
         # === CONFIGURATION ===
         self.robot_namespaces = [f"robot_{i}" for i in range(10)]
@@ -41,7 +57,7 @@ class CoveragePlotter(Node):
         self.cumulative_path_length = defaultdict(float)
 
         # === CSV LOGGING ===
-        from swarm_basics.run_utils import get_run_dir
+        from swarm_basics.run_utils import CONTACT_COOLDOWN_SEC, get_run_dir
         self.csv_dir = get_run_dir()
         self.ros_start_time = self.get_clock().now()  # ROS simulation time
 
@@ -50,10 +66,30 @@ class CoveragePlotter(Node):
         self.traj_writer = csv.writer(self.traj_file)
         self.traj_writer.writerow(['timestamp', 'elapsed_sec', 'robot_id', 'x', 'y', 'yaw'])
 
-        # events.csv – discrete events (cell visits, bumps, zones)
+        # events.csv – discrete events: CELL_VISITED / ZONE / BUMP /
+        # CONTACT_BEGIN + CONTACT_END.  Contacts are logged ONE PAIR PER
+        # EPISODE (not per physics message): a sustained press produces two
+        # rows no matter how long it lasts.  The raw per-message stream goes
+        # to contacts_raw.csv only when log_raw_contacts:=true.
         self.events_file = open(self.csv_dir / 'events.csv', 'w', newline='')
         self.events_writer = csv.writer(self.events_file)
         self.events_writer.writerow(['timestamp', 'elapsed_sec', 'robot_id', 'event_type', 'details'])
+
+        self.raw_contacts_file = None
+        self.raw_contacts_writer = None
+        if self.log_raw_contacts:
+            self.raw_contacts_file = open(
+                self.csv_dir / 'contacts_raw.csv', 'w', newline='')
+            self.raw_contacts_writer = csv.writer(self.raw_contacts_file)
+            self.raw_contacts_writer.writerow(
+                ['timestamp', 'elapsed_sec', 'robot_id', 'event_type', 'details'])
+
+        # Contact episodes: (robot, other) -> open episode.  Same cooldown as
+        # bump_counter/social_event_logger => CONTACT_END count == BUMP count.
+        self.contact_cooldown = CONTACT_COOLDOWN_SEC
+        self.contact_active = {}   # key -> {'other','start_elapsed','samples'}
+        self.contact_last = {}     # key -> (elapsed, stamp) of last message
+        self.create_timer(1.0, self._prune_contacts)
 
         # Bump counting per robot (for summary)
         self.total_bumps = defaultdict(int)
@@ -93,7 +129,13 @@ class CoveragePlotter(Node):
         self._last_save = 0.0
 
         # === TIMER FOR UPDATES ===
-        self.timer = self.create_timer(0.5, self.update_plot)
+        if self.dynamic_plots:
+            self.timer = self.create_timer(0.5, self.update_plot)
+        else:
+            self.timer = None
+            self.get_logger().info(
+                'dynamic_plots=false — live redraws disabled; coverage_map.png '
+                'and summary/coverage CSVs will be written once at shutdown.')
 
     def pose_callback(self, msg: TFMessage):
         """Handle poses from /world/.../dynamic_pose/info (TFMessage)."""
@@ -177,7 +219,14 @@ class CoveragePlotter(Node):
         self.events_file.flush()
 
     def contact_callback(self, robot_ns, msg: Contacts):
-        """Log detailed collision info from raw contact sensor — all in events.csv."""
+        """Log contacts as EPISODES, not per physics message.
+
+        Same episode rule as bump_counter/social_event_logger (shared
+        CONTACT_COOLDOWN_SEC): CONTACT_BEGIN row when contact appears (with
+        the contact position), CONTACT_END row when the pair has been silent
+        for the cooldown (with duration + raw sample count).  The unthrottled
+        stream is only written to contacts_raw.csv with log_raw_contacts:=true.
+        """
         now = self.get_clock().now()
         stamp = now.nanoseconds / 1e9
         elapsed = (now - self.ros_start_time).nanoseconds / 1e9
@@ -195,11 +244,51 @@ class CoveragePlotter(Node):
                 z = c.positions[0].z
             else:
                 x = y = z = 0.0
-            self.events_writer.writerow([
-                f'{stamp:.3f}', f'{elapsed:.3f}', robot_ns,
-                'CONTACT', f'{other},{x:.4f},{y:.4f},{z:.4f}'
-            ])
-            self.events_file.flush()
+
+            if self.log_raw_contacts:
+                self.raw_contacts_writer.writerow([
+                    f'{stamp:.3f}', f'{elapsed:.3f}', robot_ns,
+                    'CONTACT', f'{other},{x:.4f},{y:.4f},{z:.4f}'])
+                self.raw_contacts_file.flush()
+
+            key = (robot_ns, other)
+            last = self.contact_last.get(key)
+            if last is None or (elapsed - last[0]) > self.contact_cooldown:
+                if last is not None:
+                    self._close_contact(key)   # stale episode (gap before prune)
+                self.contact_active[key] = {
+                    'other': other, 'start_elapsed': elapsed, 'samples': 0}
+                self.events_writer.writerow([
+                    f'{stamp:.3f}', f'{elapsed:.3f}', robot_ns, 'CONTACT_BEGIN',
+                    f'other={other.split("::")[0]} x={x:.4f} y={y:.4f} z={z:.4f}'])
+                self.events_file.flush()
+            self.contact_active[key]['samples'] += 1
+            self.contact_last[key] = (elapsed, stamp)
+
+    def _close_contact(self, key):
+        """Emit the CONTACT_END row for an episode and forget it."""
+        ep = self.contact_active.pop(key, None)
+        last = self.contact_last.pop(key, None)
+        if ep is None or last is None:
+            return
+        end_elapsed, end_stamp = last
+        dur = end_elapsed - ep['start_elapsed']
+        self.events_writer.writerow([
+            f'{end_stamp:.3f}', f'{end_elapsed:.3f}', key[0], 'CONTACT_END',
+            f"other={ep['other'].split('::')[0]} dur={dur:.1f}s samples={ep['samples']}"])
+        self.events_file.flush()
+
+    def _prune_contacts(self):
+        """Close episodes that have been silent for the shared cooldown."""
+        now_elapsed = (self.get_clock().now() - self.ros_start_time).nanoseconds / 1e9
+        for key, (last_elapsed, _) in list(self.contact_last.items()):
+            if (now_elapsed - last_elapsed) > self.contact_cooldown:
+                self._close_contact(key)
+
+    def _flush_contacts(self):
+        """Close all open episodes (shutdown path)."""
+        for key in list(self.contact_last.keys()):
+            self._close_contact(key)
 
     def _save_png(self, path, dpi=None):
         """Save the figure as a PNG, then strip the alpha channel (RGBA->RGB).
@@ -247,6 +336,27 @@ class CoveragePlotter(Node):
                 w.writerow([f'{ns}_path_points', pts])
                 w.writerow([f'{ns}_path_length_m', f'{dist:.2f}'])
                 w.writerow([f'{ns}_bumps', bumps])
+            # Goal outcomes written by the goal driver (fixed_goals /
+            # random_goals) -> merged here so every arm's summary carries
+            # success/failure counts (goals_sent/succeeded/failed + scans).
+            goal_stats = self.csv_dir / 'goal_stats.csv'
+            if goal_stats.exists():
+                try:
+                    with open(goal_stats, newline='') as gf:
+                        for row in csv.DictReader(gf):
+                            rid = (row.get('robot_id') or '').strip()
+                            if not rid:
+                                continue
+                            w.writerow([f'goals_sent_{rid}',
+                                        row.get('goals_sent')])
+                            w.writerow([f'goals_succeeded_{rid}',
+                                        row.get('goals_succeeded')])
+                            w.writerow([f'goals_failed_{rid}',
+                                        row.get('goals_failed')])
+                            w.writerow([f'goals_scan_{rid}',
+                                        row.get('scan_goals')])
+                except OSError:
+                    pass
 
     def update_plot(self):
         """Redraw robot trajectories and visited cells."""
@@ -335,9 +445,14 @@ class CoveragePlotter(Node):
         self._write_coverage_final_csv()
         self._write_summary_csv()
 
-        # --- close open CSV files ---
+        # --- close any contact episode still open at shutdown, then the CSVs
+        # (an episode in progress when Ctrl-C hits would otherwise lose its
+        # duration/sample summary) ---
+        self._flush_contacts()
         self.traj_file.close()
         self.events_file.close()
+        if self.raw_contacts_file is not None:
+            self.raw_contacts_file.close()
 
         visited = len(self.visited)
         total = len(self.cells)
@@ -356,9 +471,22 @@ def main(args=None):
     except KeyboardInterrupt:
         node.get_logger().info("Shutting down coverage plotter.")
     finally:
-        node.save_final_plot()
+        # The shutdown signal arrives more than once (ros2 launch forwards
+        # SIGINT to its children in addition to the one we already received).
+        # A second KeyboardInterrupt would abort the final save mid-render —
+        # observed: KeyboardInterrupt inside save_final_plot lost
+        # coverage_map.png, summary.csv and coverage_final.csv entirely.
+        # Ignore further SIGINTs while the final save runs.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            node.save_final_plot()
+        except Exception as exc:  # save what we can, never die silently
+            node.get_logger().error(f"Final save failed: {exc!r}")
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

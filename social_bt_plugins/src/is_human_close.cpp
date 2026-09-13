@@ -22,15 +22,21 @@
  * topics (namespaced, e.g. /robot_0/human_close, /robot_0/human_angle) and
  * decides whether THIS robot should yield to a human:
  *
- *   * yield when a human is close, roughly in FRONT (±cone_deg, default 60°)
+ *   * yield when a human is close, roughly in FRONT (±cone_deg, default 40°)
  *     AND not clearly walking away (approaching or standing still),
- *   * keep yielding up to yield_max_s (default 4 s), then stop,
+ *   * keep yielding up to yield_max_s (default 3 s), then stop,
  *   * enter a cooldown (cooldown_s, default 8 s) before it can yield again.
  *
- * Humans moving away faster than away_rate (default 0.15 m/s), or beside /
+ * Humans moving away faster than away_rate (default 0.25 m/s), or beside /
  * behind us, do NOT trigger the hard yield — the velocity_adaptor smoothly
  * slows for them instead.  Humans approaching from the side get the hard
  * stop as a safety net (they may cross our path).
+ *
+ * TOLERANCE PASS (2026-09-13, run_2026-09-13_13-23-21: robot_0 hard-stopped in
+ * 33 % of the sampled seconds — 18 s of it with a human merely in close
+ * range): cone 60 -> 45 -> 40 deg, away_rate 0.15 -> 0.25 m/s, yield_max 4 ->
+ * 3 s — the hard stop is reserved for a human really in the way; everyone
+ * else gets the smooth velocity_adaptor slowdown.
  *
  * Writes the decision into blackboard `human_close` (true while actually
  * yielding) and `human_angle` for the tree's BlackboardCheckBool.  Publishes
@@ -53,8 +59,8 @@ public:
     human_range_rate_(0.0), last_human_t_(-1.0),
     yielding_(false), suppressing_(false),
     yield_started_s_(0.0), suppress_until_s_(0.0),
-    cone_deg_(60.0), away_rate_(0.15),
-    yield_max_s_(4.0), cooldown_s_(8.0)
+    cone_deg_(40.0), away_rate_(0.25),
+    yield_max_s_(3.0), cooldown_s_(8.0)
   {
     rclcpp::Node::SharedPtr node;
     if (config().blackboard->get("node", node) && node) {

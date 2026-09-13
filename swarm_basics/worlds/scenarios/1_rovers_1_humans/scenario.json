@@ -1,0 +1,30 @@
+{
+  "scenario": "1_rovers_1_humans",
+  "scenario_no": 1,
+  "world": "human_world",
+  "robots": [
+    [
+      "robot_0",
+      0.0,
+      0.0,
+      0.0
+    ]
+  ],
+  "humans": [
+    {
+      "name": "human_1",
+      "waypoints": [
+        [
+          -3.5,
+          -2.0
+        ],
+        [
+          -3.5,
+          2.0
+        ]
+      ],
+      "delay": 1.0
+    }
+  ],
+  "obstacles": []
+}

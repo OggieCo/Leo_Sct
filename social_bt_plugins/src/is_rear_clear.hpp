@@ -69,7 +69,7 @@ public:
         [this]() { executor_->spin(); });
       RCLCPP_INFO(rclcpp::get_logger("IsRearClear"),
                   "IsRearClear: subscribed to %s/lidar/scan_clean (rear "
-                  "sector, clear_dist=0.8 m)",
+                  "sector, clear_dist=0.7 m)",
                   node->get_namespace());
     } else {
       RCLCPP_WARN(rclcpp::get_logger("IsRearClear"),
@@ -92,7 +92,11 @@ public:
     if (!local_node_) {
       return BT::NodeStatus::FAILURE;
     }
-    double clear_dist = 0.8;
+    // 2026-09-13: 0.8 -> 0.7 m — the recovery back-up must be able to fire
+    // (and separate the rovers) more often; the rear sector is still checked
+    // every tick while reversing, so an obstacle that appears behind aborts
+    // the sequence immediately.
+    double clear_dist = 0.7;
     getInput("clear_dist", clear_dist);
     // No scan data yet (or lidar missing) -> never reverse blind.
     if (!got_scan_) {
@@ -105,7 +109,7 @@ public:
   static BT::PortsList providedPorts()
   {
     return {
-      BT::InputPort<double>("clear_dist", 0.8,
+      BT::InputPort<double>("clear_dist", 0.7,
                             "min free distance behind the rover (m)"),
     };
   }
