@@ -43,6 +43,11 @@ class RandomGoalPublisher(Node):
     FOV_CONE_DEG = 60.0      # forward cone half-angle (deg)
     FOV_FILL_PROB = 0.25     # chance of a short any-direction fill goal
     FILL_DIST = (1.5, 3.5)   # fill-goal distance range (m)
+    # If Nav2 does not ACCEPT a goal within this long, the DDS response was
+    # lost mid-flight (seen 2026-09-13: 'Failed to send goal response ...
+    # client will not receive response' -> the driver waited forever and the
+    # rover parked for the whole run).  Watchdog: invalidate + retry.
+    ACCEPT_TIMEOUT_S = 10.0
 
     def __init__(self):
         super().__init__('random_goal_publisher')
@@ -72,6 +77,7 @@ class RandomGoalPublisher(Node):
                 # Goal-outcome counters -> goal_stats.csv (merged into
                 # summary.csv by coverage_plotter, works for all three arms).
                 'g_sent': 0, 'g_ok': 0, 'g_fail': 0, 'g_scan': 0,
+                'attempt': 0,      # bumped per send; invalidates stale callbacks
             }
             # SLAM occupancy grid -> "have we scanned enough of the arena?"
             self.create_subscription(
@@ -88,8 +94,11 @@ class RandomGoalPublisher(Node):
             f'when it reaches its own')
 
         # Kick off the first goal for each robot once the node has spun up.
-        for ns in self.robots:
-            self._schedule(2.0, lambda ns=ns: self.send_goal(ns))
+        # STAGGERED (~0.75 s apart): two goals sent in the same instant during
+        # the boot storm lost one robot's accept response at the DDS layer
+        # (2026-09-13, robot_1 parked for a whole run).
+        for i, ns in enumerate(self.robots):
+            self._schedule(2.0 + 0.75 * i, lambda ns=ns: self.send_goal(ns))
 
     def _schedule(self, delay, cb):
         """Run `cb()` once after `delay` seconds (self-cancelling timer)."""
@@ -136,8 +145,16 @@ class RandomGoalPublisher(Node):
         self.get_logger().info(
             f'[{ns}] Sending goal: world ({x:.1f}, {y:.1f}) -> '
             f'map ({mx:.1f}, {my:.1f})')
+        robot['attempt'] += 1
+        attempt = robot['attempt']
         future = ac.send_goal_async(goal_msg)
-        future.add_done_callback(lambda f, ns=ns: self._goal_response_cb(f, ns))
+        future.add_done_callback(
+            lambda f, ns=ns, att=attempt: self._goal_response_cb(f, ns, att))
+        # Watchdog: DDS can drop the accept response entirely (see
+        # ACCEPT_TIMEOUT_S) — without this the node waits forever.
+        self._schedule(self.ACCEPT_TIMEOUT_S,
+                       lambda ns=ns, att=attempt, f=future:
+                       self._accept_watchdog(ns, att, f))
 
     # ------------------------------------------------------------------ #
     # Phased goal sampling
@@ -213,8 +230,35 @@ class RandomGoalPublisher(Node):
         yaw = random.uniform(-math.pi, math.pi)
         return x, y, yaw
 
-    def _goal_response_cb(self, future, ns):
+    def _accept_watchdog(self, ns, attempt, future):
+        """No accept response in time -> declare the attempt lost and retry."""
         robot = self.robots[ns]
+        if not robot['busy'] or attempt != robot['attempt'] or future.done():
+            return
+        robot['attempt'] += 1          # invalidate: a late response is ignored
+        robot['busy'] = False
+        robot['g_fail'] += 1
+        self._write_goal_stats()
+        self.get_logger().warn(
+            f'[{ns}] no goal ACCEPT response after '
+            f'{self.ACCEPT_TIMEOUT_S:.0f}s (DDS response lost?) — retrying in 5s')
+        self._schedule(5.0, lambda: self.send_goal(ns))
+
+    def _goal_response_cb(self, future, ns, attempt):
+        robot = self.robots[ns]
+        if attempt != robot['attempt']:
+            # Response of a superseded (timed-out) attempt: if the server
+            # actually accepted that goal, cancel it so the rover doesn't
+            # drive an untracked goal.
+            try:
+                gh = future.result()
+                if gh is not None and gh.accepted:
+                    gh.cancel_goal_async()
+                    self.get_logger().warn(
+                        f'[{ns}] late-accepted goal from a lost attempt — canceled')
+            except Exception:
+                pass
+            return
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().warn(f'[{ns}] Goal rejected by Nav2 — retrying in 5s')

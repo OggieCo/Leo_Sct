@@ -1,0 +1,12 @@
+[20:00:22] Mode: bt=reactive  llm=false  detector=yolo  headless=true  goals=fixed  dynamic_plots=false  raw_contacts=false  scenario=8
+[20:00:22] Starting Gazebo + robots: ros2 launch swarm_basics leo_gz.launch.py headless:=true detector:=yolo enable_llm:=false bt:=reactive dynamic_plots:=false log_raw_contacts:=false sim_world:=/root/ros2_ws/src/swarm_basics/scripts/../worlds/scenarios/3_rovers_2_humans/scenario.sdf
+[20:00:22] Starting SLAM + Nav2: ros2 launch swarm_basics nav2_slam_all.launch.py bt:=reactive
+[20:00:22] Waiting for Nav2 lifecycle nodes to become active (timeout 240s)...
+[20:01:07] READY — Nav2 active for: robot_0 robot_1 robot_2
+[20:01:07] Starting goal node: ros2 launch swarm_basics fixed_goals_all.launch.py
+[20:01:07] Auto-stop timer armed: shutdown in 300s (disable: --run-time 0).
+[20:01:07] All processes running. Send goals from another terminal, or pass --goals.
+[20:01:07] Press Ctrl+C to shut everything down early.
+[20:06:07] Run time (300s) elapsed — shutting down and saving data.
+[20:06:07] Shutting down (signalling every launch process group)...
+[20:06:10] Stopped. Logs: /root/ros2_ws/src/swarm_basics/scripts/startup_logs/2026-09-13_20-00-20

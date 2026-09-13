@@ -154,6 +154,19 @@ if [[ -z "$LLM" ]]; then
     if [[ "$BT" == "ai" ]]; then LLM="true"; else LLM="false"; fi
 fi
 
+# Run-mode (results/coverage_logs/<MODE>/) for EVERY node of the launch: same
+# rule as spawn_multi_robots.launch.py.  The launch files export it for their
+# own nodes, but the goal drivers are started directly by this script —
+# without this export they defaulted to BT_LLM and misfiled goal_stats.csv
+# (observed: BT run 2026-09-13_17-13-39 wrote into BT_LLM/3_rovers_3_humans).
+if [[ "$BT" == "no" ]]; then
+    export SWARM_RUN_MODE="Nav2"
+elif [[ "$LLM" == "true" ]]; then
+    export SWARM_RUN_MODE="BT_LLM"
+else
+    export SWARM_RUN_MODE="BT"
+fi
+
 # ------------------------------- environment --------------------------------
 # colcon's setup.bash references unset variables (e.g. COLCON_TRACE) without
 # defaults, which is fatal under `set -u` — so relax nounset while sourcing.
@@ -247,6 +260,12 @@ cleanup() {
     if pgrep -f "ros2 launch swarm_basics" >/dev/null 2>&1; then
         log "WARNING: a leftover 'ros2 launch swarm_basics' process is still running."
     fi
+    # Stale FastDDS shared-memory segments accumulate after forced (SIGKILL)
+    # shutdowns and caused SHM port-init failures on later boots (2026-09-13).
+    # Nothing of ours runs anymore -> safe to clear them.
+    if ! pgrep -f '/swarm_basics/lib/swarm_basics/' >/dev/null 2>&1; then
+        rm -f /dev/shm/fastrtps_* /dev/shm/fastdds_* 2>/dev/null || true
+    fi
     log "Stopped. Logs: $LOG_DIR"
 }
 trap 'cleanup; exit 0' INT TERM
@@ -296,24 +315,30 @@ log "Starting SLAM + Nav2: ros2 launch swarm_basics nav2_slam_all.launch.py bt:=
 start_bg ros2 launch swarm_basics nav2_slam_all.launch.py bt:="$BT" >"$LOG_DIR/nav2.log" 2>&1
 
 # ------------------------------- 3) readiness gate --------------------------
+# Robust in-process probe (scripts/wait_nav2_ready.py): ONE rclpy process that
+# discovers each <ns>/bt_navigator lifecycle service once and polls it until
+# active.  The old per-poll `ros2 lifecycle get` CLI was too fragile under
+# boot load: it missed discovery within its 5 s timeout and the gate kept
+# reporting healthy stacks as "not active" (2026-09-13 — both robots active
+# 14 s/23 s after launch, gate still waiting 40 s later).
 log "Waiting for Nav2 lifecycle nodes to become active (timeout ${READY_TIMEOUT}s)..."
 ready=false
-deadline=$((SECONDS + READY_TIMEOUT))
-while (( SECONDS < deadline )); do
-    all=1
-    for ns in "${ROBOTS[@]}"; do
-        state="$(timeout 5 ros2 lifecycle get "/${ns}/bt_navigator" 2>/dev/null || true)"  # timeout: a wedged ros2 CLI daemon must never hang the gate (seen 2026-09-13)
-        [[ "$state" == active* ]] || all=0
-    done
-    if (( all )); then ready=true; break; fi
-    sleep 3
-done
-
-if $ready; then
-    log "READY — Nav2 active for: ${ROBOTS[*]}"
-else
-    log "WARNING: readiness timeout — Nav2 not active yet. Check $LOG_DIR/nav2.log"
+if python3 "$SCRIPT_DIR/wait_nav2_ready.py" "$READY_TIMEOUT" "${ROBOTS[@]}"; then
+    ready=true
 fi
+
+if ! $ready; then
+    # FAIL FAST (2026-09-13): a boot that misses the gate does not recover
+    # reliably (one robot's SLAM can stay starved or a robot may never have
+    # been spawned at all — the run then idles for its whole 300 s window).
+    # Abort immediately and let the batch retry the cell with a fresh boot,
+    # which is what actually fixes these startup races.
+    log "ERROR: readiness timeout — Nav2 not active for: ${ROBOTS[*]}"
+    log "Aborting this run NOW (fail fast). Diagnostics: $LOG_DIR/nav2.log"
+    cleanup
+    exit 3
+fi
+log "READY — Nav2 active for: ${ROBOTS[*]}"
 
 # ------------------------------- 4) goals -----------------------------------
 case "$GOALS" in

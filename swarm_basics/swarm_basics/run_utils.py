@@ -96,6 +96,16 @@ def get_run_dir():
         # launching anything, so every node — however late it starts (the
         # goal drivers wait for the Nav2 readiness gate) — resolves to the
         # same run_<id> folder, goal_stats.csv included.
+        # JOIN the folder whichever mode root already has it (the sim/Nav2
+        # launch creates it with the authoritative mode); only create it
+        # ourselves if nobody did yet.  This keeps a run in ONE folder even
+        # when a node's SWARM_RUN_MODE is missing — the goal drivers used to
+        # default to BT_LLM and misfile goal_stats.csv into
+        # BT_LLM/<scenario>/ (observed: BT run 2026-09-13_17-13-39).
+        for mode in _MODES:
+            d = _scenario_root(BASE_DIR / mode) / f'run_{rid}'
+            if d.is_dir():
+                return d
         d = root / f'run_{rid}'
         d.mkdir(parents=True, exist_ok=True)
         return d
