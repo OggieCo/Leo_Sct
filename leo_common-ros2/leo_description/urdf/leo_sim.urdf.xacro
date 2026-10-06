@@ -5,11 +5,27 @@
   <xacro:arg name="fixed" default="false"/>
   <xacro:arg name="robot_ns" default=""/>
   <xacro:arg name="mecanum_wheels" default="false"/>
+  <!-- Sensor rates: the dominant Gazebo cost with several rovers.  LiDAR
+       ray-casts and RGB-D rendering scale linearly with these, and the
+       image/depth streams also cross the ROS bridge (bandwidth + CPU).
+       Defaults are the original 10 Hz / 5 Hz. -->
+  <xacro:arg name="lidar_rate" default="10"/>
+  <xacro:arg name="camera_rate" default="5"/>
+  <!-- RGB-D resolution: rendering, bridge transport and detector
+       pre-processing all scale with the pixel count.  640x480 is the
+       original; 320x240 is a 4x saving. -->
+  <xacro:arg name="camera_width" default="640"/>
+  <xacro:arg name="camera_height" default="480"/>
 
   <xacro:include filename="$(find leo_description)/urdf/macros.xacro"/>
 
   <xacro:leo_sim robot_ns="$(arg robot_ns)"
                  fixed="$(arg fixed)"
-                 mecanum_wheels="$(arg mecanum_wheels)"/>
+                 mecanum_wheels="$(arg mecanum_wheels)"
+                 lidar_rate="$(arg lidar_rate)"
+                 camera_rate="$(arg camera_rate)"
+                 camera_width="$(arg camera_width)"
+                 camera_height="$(arg camera_height)"/>
+                 camera_rate="$(arg camera_rate)"/>
 
 </robot>

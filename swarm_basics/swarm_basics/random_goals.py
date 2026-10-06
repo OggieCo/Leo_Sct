@@ -4,12 +4,6 @@
 One node manages every robot in ROBOT_POSITIONS (robot_config.py).  Each robot
 gets a new random goal ONLY when it has reached its own previous goal
 (STATUS_SUCCEEDED), so robots explore independently without goal spam.
-
-Phased goal sampling: while a rover's own SLAM map is not yet scanned enough
-(known-fraction < SCAN_THRESHOLD), goals are kept inside its field of view
-(forward of its current heading) so it never gets a blind out-of-sight goal.
-Once the map is >= SCAN_THRESHOLD known, goals span the full arena including
-the +/-6..7 edge bands next to the walls.
 """
 
 import rclpy
@@ -18,51 +12,19 @@ from rclpy.action import ActionClient
 from nav2_msgs.action import NavigateToPose
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, Twist
-from nav_msgs.msg import OccupancyGrid, Odometry
-import csv
 import random
 import math
 import signal
 import time
 
-from swarm_basics.robot_config import ROBOT_POSITIONS, world_to_map
-from swarm_basics.run_utils import get_run_dir
+from swarm_basics.robot_config import ROBOT_POSITIONS
 
 
 class RandomGoalPublisher(Node):
-    # ---- Phased goal sampling ----
-    # Phase 1 (map not scanned enough): goals stay in the rover's own field of
-    # view — forward of its current heading — so it never gets a blind
-    # out-of-sight goal (the robot_1 bug in the 14:56 run: a goal behind its
-    # heading, into an unscanned area).  Phase 2 (map known-fraction >=
-    # SCAN_THRESHOLD): full arena including the +/-6..7 edge bands.
-    SCAN_THRESHOLD = 0.6     # known fraction of /{ns}/map that unlocks Phase 2
-    ARENA_HALF = 6.5         # full-arena goal bounds (walls at +/-7.25)
-    ARENA_SAFE = 6.0         # phase-1 clamp so FOV goals can't hit a wall
-    FOV_DIST = (1.5, 4.5)    # forward-goal distance range (m)
-    FOV_CONE_DEG = 60.0      # forward cone half-angle (deg)
-    FOV_FILL_PROB = 0.25     # chance of a short any-direction fill goal
-    FILL_DIST = (1.5, 3.5)   # fill-goal distance range (m)
-    # If Nav2 does not ACCEPT a goal within this long, the DDS response was
-    # lost mid-flight (seen 2026-09-13: 'Failed to send goal response ...
-    # client will not receive response' -> the driver waited forever and the
-    # rover parked for the whole run).  Watchdog: invalidate + retry.
-    ACCEPT_TIMEOUT_S = 10.0
-
     def __init__(self):
         super().__init__('random_goal_publisher')
 
-        # Per-robot state: action client, stop publisher, goal handle, busy
-        # flag, current odom pose, and SLAM map known-fraction (phased goals).
-        self.spawns = {ns: (x, y, yaw) for ns, x, y, yaw in ROBOT_POSITIONS}
-        # Eagerly join the launch's run folder (SWARM_RUN_ID from
-        # start_experiment.sh) — see fixed_goals.py: this node starts after
-        # the Nav2 readiness gate, so a lazy resolve would splinter
-        # goal_stats.csv into a second run_ folder.
-        try:
-            self._run_dir = get_run_dir()
-        except OSError:
-            self._run_dir = None   # fallback: retry on the first write
+        # Per-robot state: action client, stop publisher, goal handle, busy flag.
         self.robots = {}
         for ns, _, _, _ in ROBOT_POSITIONS:
             self.robots[ns] = {
@@ -71,22 +33,7 @@ class RandomGoalPublisher(Node):
                 'cmd_pub': self.create_publisher(Twist, f'/{ns}/cmd_vel', 10),
                 'goal_handle': None,
                 'busy': False,
-                'pose': None,      # (x, y, yaw) in {ns}/odom frame
-                'map_known': 0.0,  # known fraction of /{ns}/map
-                'phase2': False,   # True once full-arena goals are unlocked
-                # Goal-outcome counters -> goal_stats.csv (merged into
-                # summary.csv by coverage_plotter, works for all three arms).
-                'g_sent': 0, 'g_ok': 0, 'g_fail': 0, 'g_scan': 0,
-                'attempt': 0,      # bumped per send; invalidates stale callbacks
             }
-            # SLAM occupancy grid -> "have we scanned enough of the arena?"
-            self.create_subscription(
-                OccupancyGrid, f'/{ns}/map',
-                lambda msg, ns=ns: self._map_cb(msg, ns), 10)
-            # Odom -> where is the rover right now (for forward-FOV goals)
-            self.create_subscription(
-                Odometry, f'/{ns}/odom',
-                lambda msg, ns=ns: self._odom_cb(msg, ns), 10)
 
         self.get_logger().info(
             f'RandomGoalPublisher started for {len(self.robots)} robot(s): '
@@ -94,11 +41,8 @@ class RandomGoalPublisher(Node):
             f'when it reaches its own')
 
         # Kick off the first goal for each robot once the node has spun up.
-        # STAGGERED (~0.75 s apart): two goals sent in the same instant during
-        # the boot storm lost one robot's accept response at the DDS layer
-        # (2026-09-13, robot_1 parked for a whole run).
-        for i, ns in enumerate(self.robots):
-            self._schedule(2.0 + 0.75 * i, lambda ns=ns: self.send_goal(ns))
+        for ns in self.robots:
+            self._schedule(2.0, lambda ns=ns: self.send_goal(ns))
 
     def _schedule(self, delay, cb):
         """Run `cb()` once after `delay` seconds (self-cancelling timer)."""
@@ -119,151 +63,32 @@ class RandomGoalPublisher(Node):
             self._schedule(5.0, lambda: self.send_goal(ns))
             return
 
-        # Phased goal — WORLD coordinates, then converted to this rover's own
-        # SLAM map frame (each rover's map is anchored at its own spawn pose),
-        # so all rovers explore the same world box.
-        x, y, yaw = self._sample_goal(ns)
-        mx, my, myaw = world_to_map(ns, x, y, yaw)
+        # Random position in a 6x6m box around origin (within corridor world)
+        x = random.uniform(-3.0, 3.0)
+        y = random.uniform(-3.0, 3.0)
+        yaw = random.uniform(-math.pi, math.pi)
 
-        # Per-robot map frame (each rover has its own {ns}/map tree).
-        # NO leading slash: Nav2's costmap global_frame is '{ns}/map' and
-        # transformPoseInTargetFrame does a string compare — '/robot_0/map'
-        # != 'robot_0/map' sent it down a TF lookup that fails.
+        # Per-robot map frame (each rover has its own /{ns}/map tree)
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose = PoseStamped()
-        goal_msg.pose.header.frame_id = f'{ns}/map'
+        goal_msg.pose.header.frame_id = f'/{ns}/map'
         goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
-        goal_msg.pose.pose.position.x = mx
-        goal_msg.pose.pose.position.y = my
+        goal_msg.pose.pose.position.x = x
+        goal_msg.pose.pose.position.y = y
         goal_msg.pose.pose.position.z = 0.0
-        goal_msg.pose.pose.orientation.w = math.cos(myaw / 2.0)
-        goal_msg.pose.pose.orientation.z = math.sin(myaw / 2.0)
+        goal_msg.pose.pose.orientation.w = math.cos(yaw / 2.0)
+        goal_msg.pose.pose.orientation.z = math.sin(yaw / 2.0)
 
         robot['busy'] = True
-        robot['g_sent'] += 1
-        self._write_goal_stats()
-        self.get_logger().info(
-            f'[{ns}] Sending goal: world ({x:.1f}, {y:.1f}) -> '
-            f'map ({mx:.1f}, {my:.1f})')
-        robot['attempt'] += 1
-        attempt = robot['attempt']
+        self.get_logger().info(f'[{ns}] Sending goal: ({x:.1f}, {y:.1f})')
         future = ac.send_goal_async(goal_msg)
-        future.add_done_callback(
-            lambda f, ns=ns, att=attempt: self._goal_response_cb(f, ns, att))
-        # Watchdog: DDS can drop the accept response entirely (see
-        # ACCEPT_TIMEOUT_S) — without this the node waits forever.
-        self._schedule(self.ACCEPT_TIMEOUT_S,
-                       lambda ns=ns, att=attempt, f=future:
-                       self._accept_watchdog(ns, att, f))
+        future.add_done_callback(lambda f, ns=ns: self._goal_response_cb(f, ns))
 
-    # ------------------------------------------------------------------ #
-    # Phased goal sampling
-    # ------------------------------------------------------------------ #
-    def _map_cb(self, msg, ns):
-        """Track the known (scanned) fraction of this rover's SLAM map."""
+    def _goal_response_cb(self, future, ns):
         robot = self.robots[ns]
-        if not msg.data:
-            return
-        known = sum(1 for v in msg.data if v >= 0)
-        frac = known / len(msg.data)
-        robot['map_known'] = frac
-        if not robot['phase2'] and frac >= self.SCAN_THRESHOLD:
-            robot['phase2'] = True
-            self.get_logger().info(
-                f'[{ns}] map {frac*100:.0f}% known — unlocked full-arena '
-                f'(edge) goals')
-
-    def _odom_cb(self, msg, ns):
-        """Remember the rover's current pose in its odom frame."""
-        p = msg.pose.pose
-        q = p.orientation
-        yaw = math.atan2(
-            2.0 * (q.w * q.z + q.x * q.y),
-            1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-        self.robots[ns]['pose'] = (p.position.x, p.position.y, yaw)
-
-    def _sample_goal(self, ns):
-        """Pick the next world goal (x, y, yaw) for robot `ns`.
-
-        Phase 1 — map not scanned enough yet: a goal the rover can actually
-        see.  Mostly a forward cone (within +/-FOV_CONE_DEG of its heading,
-        FOV_DIST away); sometimes a short any-direction goal so it also fills
-        the blind spot behind it.  Clamped to +/-ARENA_SAFE so a forward goal
-        near the wall can't overshoot into it.
-
-        Phase 2 — known-fraction of /{ns}/map >= SCAN_THRESHOLD: the whole
-        arena, including the +/-6..7 edge bands next to the walls.
-        """
-        robot = self.robots[ns]
-        if robot['map_known'] >= self.SCAN_THRESHOLD:
-            x = random.uniform(-self.ARENA_HALF, self.ARENA_HALF)
-            y = random.uniform(-self.ARENA_HALF, self.ARENA_HALF)
-            yaw = random.uniform(-math.pi, math.pi)
-            return x, y, yaw
-
-        # Current pose in world coords (odom is anchored at spawn and aligned
-        # with the spawn yaw — rotate odom coords into the world frame).
-        pose = robot['pose']
-        if pose is None:
-            px, py, pyaw = self.spawns.get(ns, (0.0, 0.0, 0.0))
-        else:
-            xo, yo, yoaw = pose
-            x0, y0, yaw0 = self.spawns.get(ns, (0.0, 0.0, 0.0))
-            c, s = math.cos(yaw0), math.sin(yaw0)
-            px = x0 + xo * c - yo * s
-            py = y0 + xo * s + yo * c
-            pyaw = (yoaw + yaw0) % (2.0 * math.pi)
-
-        if random.random() < self.FOV_FILL_PROB:
-            d = random.uniform(*self.FILL_DIST)
-            h = random.uniform(-math.pi, math.pi)
-        else:
-            d = random.uniform(*self.FOV_DIST)
-            cone = math.radians(self.FOV_CONE_DEG)
-            h = random.uniform(-cone, cone)
-
-        # Clamp inside the safe arena so the goal is always reachable.
-        x = max(-self.ARENA_SAFE, min(self.ARENA_SAFE,
-                                      px + d * math.cos(pyaw + h)))
-        y = max(-self.ARENA_SAFE, min(self.ARENA_SAFE,
-                                      py + d * math.sin(pyaw + h)))
-        yaw = random.uniform(-math.pi, math.pi)
-        return x, y, yaw
-
-    def _accept_watchdog(self, ns, attempt, future):
-        """No accept response in time -> declare the attempt lost and retry."""
-        robot = self.robots[ns]
-        if not robot['busy'] or attempt != robot['attempt'] or future.done():
-            return
-        robot['attempt'] += 1          # invalidate: a late response is ignored
-        robot['busy'] = False
-        robot['g_fail'] += 1
-        self._write_goal_stats()
-        self.get_logger().warn(
-            f'[{ns}] no goal ACCEPT response after '
-            f'{self.ACCEPT_TIMEOUT_S:.0f}s (DDS response lost?) — retrying in 5s')
-        self._schedule(5.0, lambda: self.send_goal(ns))
-
-    def _goal_response_cb(self, future, ns, attempt):
-        robot = self.robots[ns]
-        if attempt != robot['attempt']:
-            # Response of a superseded (timed-out) attempt: if the server
-            # actually accepted that goal, cancel it so the rover doesn't
-            # drive an untracked goal.
-            try:
-                gh = future.result()
-                if gh is not None and gh.accepted:
-                    gh.cancel_goal_async()
-                    self.get_logger().warn(
-                        f'[{ns}] late-accepted goal from a lost attempt — canceled')
-            except Exception:
-                pass
-            return
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().warn(f'[{ns}] Goal rejected by Nav2 — retrying in 5s')
-            robot['g_fail'] += 1
-            self._write_goal_stats()
             robot['busy'] = False
             self._schedule(5.0, lambda: self.send_goal(ns))
             return
@@ -279,49 +104,19 @@ class RandomGoalPublisher(Node):
         robot['busy'] = False
         status = result.status
         if status == GoalStatus.STATUS_SUCCEEDED:
-            robot['g_ok'] += 1
-            self._write_goal_stats()
             self.get_logger().info(f'[{ns}] Goal reached — sending a new random goal')
             self._schedule(0.5, lambda: self.send_goal(ns))
         else:
-            robot['g_fail'] += 1
-            self._write_goal_stats()
             self.get_logger().warn(
                 f'[{ns}] Goal finished with status {status} (not SUCCEEDED) — '
                 f'retrying in 5s')
             self._schedule(5.0, lambda: self.send_goal(ns))
-
-    def _write_goal_stats(self):
-        """Per-robot goal outcomes -> <run_dir>/goal_stats.csv.
-
-        Same format as fixed_goals.py (scan_goals stays 0 here — random goals
-        have no forward-scan guard).  Rewritten on every change so a Ctrl-C
-        never loses the counts.
-        """
-        try:
-            if self._run_dir is None:
-                # Fallback if the eager resolve in __init__ failed: resolve
-                # ONCE per process (see fixed_goals.py) — a fresh
-                # get_run_dir() per write splinters one run across folders.
-                self._run_dir = get_run_dir()
-            path = self._run_dir / 'goal_stats.csv'
-            with open(path, 'w', newline='') as f:
-                w = csv.writer(f)
-                w.writerow(['robot_id', 'goals_sent', 'goals_succeeded',
-                            'goals_failed', 'scan_goals'])
-                for ns in self.robots:
-                    r = self.robots[ns]
-                    w.writerow([ns, r.get('g_sent', 0), r.get('g_ok', 0),
-                                r.get('g_fail', 0), r.get('g_scan', 0)])
-        except OSError as e:
-            self.get_logger().warn(f'could not write goal_stats.csv: {e}')
 
     def killswitch(self):
         """Stop every rover on shutdown: cancel active Nav2 goals and flush
         zero-velocity commands to Gazebo BEFORE rclpy tears down the context
         (publishing in destroy_node is too late)."""
         self.get_logger().info('Stopping robot(s)...')
-        self._write_goal_stats()   # final counts before the run folder closes
         for ns, robot in self.robots.items():
             # 1) cancel the active Nav2 goal so the controller stops commanding
             try:

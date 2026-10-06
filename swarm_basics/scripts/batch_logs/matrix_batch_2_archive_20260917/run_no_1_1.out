@@ -1,0 +1,19 @@
+[15:04:57] Mode: bt=no  llm=false  detector=yolo  headless=true  goals=fixed  dynamic_plots=false  raw_contacts=false  scenario=1
+[15:04:57] Starting Gazebo + robots: ros2 launch swarm_basics leo_gz.launch.py headless:=true detector:=yolo enable_llm:=false bt:=no dynamic_plots:=false log_raw_contacts:=false sim_world:=/root/ros2_ws/src/swarm_basics/scripts/../worlds/scenarios/1_rovers_1_humans/scenario.sdf
+[15:04:57] Starting SLAM + Nav2: ros2 launch swarm_basics nav2_slam_all.launch.py bt:=no
+[15:04:57] Waiting for Nav2 lifecycle nodes to become active (timeout 240s)...
+TIMEOUT — still waiting for: ['robot_0']
+Traceback (most recent call last):
+  File "/root/ros2_ws/src/swarm_basics/scripts/wait_nav2_ready.py", line 71, in <module>
+    sys.exit(main())
+  File "/root/ros2_ws/src/swarm_basics/scripts/wait_nav2_ready.py", line 66, in main
+    rclpy.shutdown()
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 130, in shutdown
+    _shutdown(context=context)
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/utilities.py", line 58, in shutdown
+    return context.shutdown()
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/context.py", line 102, in shutdown
+    self.__context.shutdown()
+rclpy._rclpy_pybind11.RCLError: failed to shutdown: rcl_shutdown already called on the given context, at ./src/rcl/init.c:241
+[15:05:03] Shutting down (signalling every launch process group)...
+[15:05:04] Stopped. Logs: /root/ros2_ws/src/swarm_basics/scripts/startup_logs/2026-09-14_15-04-55

@@ -1,0 +1,3 @@
+timestamp,elapsed_sec,robot_id,event_type,details
+1790154280.919,11.310,robot_0,CELL_VISITED,cell_-5_-5
+1790154280.921,11.312,robot_1,CELL_VISITED,cell_4_4

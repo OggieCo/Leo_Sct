@@ -30,9 +30,11 @@ from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import OccupancyGrid, Odometry
 import csv
 import math
+import os
 import signal
 import time
 
+from swarm_basics.goal_validation import load_obstacles, sanitize_tour
 from swarm_basics.robot_config import ROBOT_POSITIONS, world_to_map
 from swarm_basics.run_utils import get_run_dir
 
@@ -48,8 +50,12 @@ from swarm_basics.run_utils import get_run_dir
 # EVEN radii {4, 6, +6.5 corners}, robot_1 on ODD radii {3, 5, +5.5 corners})
 # so the tours remain distinct overall.  Same goal COUNT (28) and same arena
 # coverage per robot -> the A/B stays fair.  Edit freely — every run uses
-# these exact lists.
-# ---------------------------------------------------------------------------
+# these exact lists.#
+# SCENARIO OBSTACLE VALIDATION (2026-09-14): the lists below are authored for
+# the open arena.  At startup fixed_goals.py snaps any waypoint that falls
+# inside a static obstacle keepout ring of the ACTIVE scenario (see
+# goal_validation.py; deterministic, identical for every arm; no-op when the
+# scenario has no static obstacles).# ---------------------------------------------------------------------------
 FIXED_GOALS_BY_ROBOT = {
     'robot_0': [
         # --- inner ring (central human zone; SHARED with robot_1) ---
@@ -193,6 +199,45 @@ FIXED_GOALS_BY_ROBOT = {
         (-6.5, -6.5),
         (6.5, -6.5),
     ],
+    # --- 5-rover tour (5_rovers_* scenarios, added 2026-09-17).  With five
+    # rovers the complementary-radii trick runs out (only so many ring
+    # radii): robot_4 re-uses robot_2's radii {2.5, 4.5} but rotated, and
+    # shares the 6.0 corners — spacing stays fair (same 28 goals / same
+    # overall arena coverage per robot) even though a few waypoints repeat.
+    'robot_4': [
+        # inner ring (SAME 8 central cells, rotated 3 steps; SHARED human zone)
+        (-2.0, 2.0),
+        (-2.0, 0.0),
+        (-2.0, -2.0),
+        (0.0, -2.0),
+        (2.0, -2.0),
+        (0.0, 0.0),
+        (2.0, 0.0),
+        (0.0, 2.0),
+        # middle ring radius 2.5 (rotated 2 steps vs robot_2's copy)
+        (0.0, 2.5),
+        (2.5, 2.5),
+        (2.5, 0.0),
+        (2.5, -2.5),
+        (0.0, -2.5),
+        (-2.5, -2.5),
+        (-2.5, 0.0),
+        (-2.5, 2.5),
+        # outer ring radius 4.5 (rotated 4 steps vs robot_2's copy)
+        (4.5, 4.5),
+        (0.0, 4.5),
+        (-4.5, 4.5),
+        (-4.5, 0.0),
+        (-4.5, -4.5),
+        (0.0, -4.5),
+        (4.5, -4.5),
+        (4.5, 0.0),
+        # corners at 6.0 (shared with robot_2)
+        (6.0, 6.0),
+        (-6.0, 6.0),
+        (-6.0, -6.0),
+        (6.0, -6.0),
+    ],
 }
 
 # Fallback for any rover without a dedicated entry (keeps old behaviour).
@@ -200,17 +245,57 @@ FIXED_GOALS = FIXED_GOALS_BY_ROBOT['robot_0']
 
 
 class FixedGoalPublisher(Node):
-    SCAN_THRESHOLD = 0.6   # known fraction of /{ns}/map that unlocks far goals
-    SCAN_SAFE_DIST = 5.0   # a fixed goal closer than this is always allowed
+    # --- out-of-map guard -------------------------------------------------
+    # The guard measures how much of the ARENA is known, NOT how much of the
+    # SLAM map message is known.  The SLAM canvas GROWS as the rover explores,
+    # so known/len(data) is a moving target: measured 2026-09-23 it sat at
+    # 6-19 % for minutes and never approached the old 0.6 gate, which meant no
+    # far goal was ever unlocked by it and the 5 m proximity hatch did all the
+    # work (goals issued at 1 % known -> aborted by Nav2 -> retries -> scan).
+    # Counting only cells inside the arena rectangle gives a stable denominator
+    # so the threshold means "we have mapped X % of the arena".
+    ARENA_HALF = 7.3                # arena walls at +/-7.25 m in these scenarios
+    SCAN_THRESHOLD = float(os.environ.get('SWARM_SCAN_THRESHOLD', '0.30'))
+    # A fixed goal nearer than this bypasses the guard.  Justified by hardware:
+    # the roof LiDAR sees 10 m, so a goal within ~5 m is already inside scanned
+    # space — the guard exists to stop goals BEYOND the mapped area, not to
+    # forbid nearby ones.  0.0 disables the bypass (strict gate).
+    SCAN_SAFE_DIST = float(os.environ.get('SWARM_SCAN_SAFE_DIST', '4.0'))
     SCAN_STEP_DIST = 3.0   # deterministic forward scan-goal distance (m)
     ARENA_SAFE = 6.0       # scan goals clamped inside the arena
     MAX_FAILS_BEFORE_SCAN = 3  # plan failures on one fixed goal -> scan first
+    # Safety net (2026-09-14): after the forward-scan rescue a goal that still
+    # cannot be planned gets ONE more full failure battery, then the tour
+    # advances (log SKIPPED_UNREACHABLE).  idx advances only on SUCCESS or
+    # SKIP, so a single unreachable goal can never eat the whole run again
+    # (3_rovers_and_obstacles: a goal INSIDE an obstacle kept rovers in
+    # scan/retry loops for all 300 s — in every arm).
+    MAX_FAILS_BEFORE_SKIP = 2 * MAX_FAILS_BEFORE_SCAN   # 6 attempts total
     # If Nav2 does not ACCEPT a goal within this long, the DDS response was
     # lost mid-flight (seen 2026-09-13: bt_navigator logged 'Failed to send
     # goal response (timeout): client will not receive response' — this node
     # then waited forever and the rover parked for the whole run).
     # The watchdog invalidates the attempt, counts it failed and retries.
-    ACCEPT_TIMEOUT_S = 10.0
+    # 2026-09-23: raised 10 -> 20 s.  The 11:59 run logged 13 'no goal ACCEPT
+    # response after 10s' warnings — several for the SAME robot, minutes apart,
+    # while its stack was healthy — and accepted only 2 goals in 155 s.  At 10 s
+    # a healthy-but-busy server (costmap init, detector model loads) is written
+    # off as a lost response; a genuinely lost response still fails, 10 s later.
+    # 2026-09-24: raised 20 -> 40 s (override: SWARM_ACCEPT_TIMEOUT_S).  In the
+    # 5-rover run 12:08 accept responses arrived late 14 times while every stack
+    # was healthy, each attempt was invalidated before it could run, and 0 of
+    # 40 goals completed.  At five rovers the server needs more slack.
+    ACCEPT_TIMEOUT_S = float(os.environ.get('SWARM_ACCEPT_TIMEOUT_S', '40.0'))
+
+    # How often a lost accept response may be re-sent before the attempt counts
+    # as a failure (override: SWARM_ACCEPT_RETRIES).  Unbounded re-sends held
+    # every robot of that 5-rover run in an "invalidate -> wait -> re-send"
+    # loop for the whole run — 451 backward events on robot_0, 5-8 m of path
+    # each, 0/40 goals — because a goal never stayed in flight long enough to
+    # be reached.  One re-send absorbs a single lost response; after that the
+    # normal failure battery (scan-forward rescue, then skip) takes over and
+    # the tour advances.
+    MAX_ACCEPT_RETRIES = int(os.environ.get('SWARM_ACCEPT_RETRIES', '1'))
 
     def __init__(self):
         super().__init__('fixed_goal_publisher')
@@ -218,6 +303,36 @@ class FixedGoalPublisher(Node):
         # Per-robot state: action client, stop publisher, goal handle, busy
         # flag, index into FIXED_GOALS, current odom pose and map known-frac.
         self.spawns = {ns: (x, y, yaw) for ns, x, y, yaw in ROBOT_POSITIONS}
+
+        # Scenario obstacle validation of the fixed tours (harness-side INPUT
+        # validation, not navigation policy — every arm runs this identical
+        # code).  A waypoint inside an obstacle footprint + clearance is
+        # physically unreachable (the planner cannot leave the lethal
+        # costmap, the 0.25 m goal checker can never be satisfied): snap such
+        # waypoints radially out of the keepout ring and log every change.
+        # No-op for scenarios without static obstacles.
+        self._tours = {}
+        _obstacles = load_obstacles()
+        _snapped = 0
+        for _ns, _, _, _ in ROBOT_POSITIONS:
+            _tour, _changes = sanitize_tour(
+                FIXED_GOALS_BY_ROBOT.get(_ns, FIXED_GOALS), _obstacles)
+            self._tours[_ns] = _tour
+            _snapped += len(_changes)
+            for _i, _old, _new, _oc in _changes:
+                self.get_logger().warn(
+                    f'[{_ns}] tour goal #{_i} ({_old[0]:.2f}, {_old[1]:.2f}) '
+                    f'inside obstacle keepout @ ({_oc[0]:.2f}, {_oc[1]:.2f}) '
+                    f'— snapped to ({_new[0]:.2f}, {_new[1]:.2f})')
+        if _obstacles:
+            self.get_logger().info(
+                f'tour validation: {len(_obstacles)} static obstacle(s), '
+                f'{_snapped} waypoint(s) snapped clear of keepout rings')
+        else:
+            self.get_logger().info(
+                'tour validation: no static obstacles in this scenario — '
+                'tours unchanged')
+
         # Resolve the shared run folder EAGERLY: start_experiment.sh starts
         # this node only after the Nav2 readiness gate (~30 s in), so a lazy
         # resolve would find the run folder already "old" and put
@@ -228,6 +343,12 @@ class FixedGoalPublisher(Node):
             self._run_dir = get_run_dir()
         except OSError:
             self._run_dir = None   # fallback: retry on the first write
+
+        # Arena window (world frame) used by the out-of-map guard: only cells
+        # inside it count towards "how much of the arena is scanned".
+        self._arena_min = -self.ARENA_HALF
+        self._arena_max = self.ARENA_HALF
+
         self.robots = {}
         for ns, _, _, _ in ROBOT_POSITIONS:
             self.robots[ns] = {
@@ -240,6 +361,7 @@ class FixedGoalPublisher(Node):
                 'on_fixed_goal': False,  # is the goal in flight a FIXED goal?
                 'fail_count': 0,       # consecutive non-SUCCEEDED results
                 'force_scan': False,   # next send must be a forward scan goal
+                'scan_used': False,    # forward-scan rescue spent on this goal?
                 'pose': None,          # (x, y, yaw) in {ns}/odom frame
                 'map_known': 0.0,      # known fraction of /{ns}/map
                 'done_logged': False,
@@ -247,6 +369,7 @@ class FixedGoalPublisher(Node):
                 # summary.csv by coverage_plotter, works for all three arms).
                 'g_sent': 0, 'g_ok': 0, 'g_fail': 0, 'g_scan': 0,
                 'attempt': 0,      # bumped per send; invalidates stale callbacks
+                'accept_retries': 0,   # re-sends spent on THIS goal (bounded)
             }
             # SLAM occupancy grid -> "is the arena scanned enough for far goals?"
             self.create_subscription(
@@ -279,20 +402,46 @@ class FixedGoalPublisher(Node):
         cb()
 
     def _goals(self, ns):
-        """This robot's fixed tour (world waypoints).  Different route per
-        rover, same goal count -> fair A/B with disjoint waypoints."""
-        return FIXED_GOALS_BY_ROBOT.get(ns, FIXED_GOALS)
+        """This robot's fixed tour (world waypoints), already validated
+        against the active scenario's static obstacles (see __init__).
+        Different route per rover, same goal count -> fair A/B."""
+        return self._tours.get(ns, FIXED_GOALS)
 
     # ------------------------------------------------------------------ #
     # Perception helpers
     # ------------------------------------------------------------------ #
     def _map_cb(self, msg, ns):
-        """Track the known (scanned) fraction of this rover's SLAM map."""
+        """Track the known (scanned) fraction of the ARENA.
+
+        Only cells inside the arena window are counted, so the ratio is not
+        diluted by the unknown margin that slam_toolbox keeps adding as the
+        canvas grows (see the ARENA_HALF comment on the class).
+        """
         robot = self.robots[ns]
         if not msg.data:
             return
-        known = sum(1 for v in msg.data if v >= 0)
-        robot['map_known'] = known / len(msg.data)
+        info = msg.info
+        res = float(info.resolution)
+        if res <= 0.0:
+            return
+        ox = info.origin.position.x
+        oy = info.origin.position.y
+        ix0 = max(0, int((self._arena_min - ox) / res))
+        ix1 = min(info.width, int((self._arena_max - ox) / res) + 1)
+        iy0 = max(0, int((self._arena_min - oy) / res))
+        iy1 = min(info.height, int((self._arena_max - oy) / res) + 1)
+        known = 0
+        total = 0
+        data = msg.data
+        width = info.width
+        for iy in range(iy0, iy1):
+            row = iy * width
+            for ix in range(ix0, ix1):
+                total += 1
+                if data[row + ix] >= 0:
+                    known += 1
+        if total:
+            robot['map_known'] = known / total
 
     def _odom_cb(self, msg, ns):
         """Remember the rover's current pose in its odom frame."""
@@ -321,14 +470,28 @@ class FixedGoalPublisher(Node):
         return px, py, pyaw
 
     def _forward_scan_goal(self, ns, reason):
-        """Deterministic forward scan goal (no randomness -> A/B stays fair):
-        widen the map a little, then the fixed goal is retried.  Used by the
-        out-of-map guard AND the repeated plan-failure fallback."""
-        px, py, pyaw = self._world_pose(ns)
-        sx = max(-self.ARENA_SAFE, min(self.ARENA_SAFE,
-                                       px + self.SCAN_STEP_DIST * math.cos(pyaw)))
-        sy = max(-self.ARENA_SAFE, min(self.ARENA_SAFE,
-                                       py + self.SCAN_STEP_DIST * math.sin(pyaw)))
+        """Deterministic step ALONG THE TOUR, towards the next waypoint.
+
+        It used to be "SCAN_STEP_DIST metres along the rover's CURRENT HEADING",
+        which PING-PONGS: after a scan goal the rover is often facing back the
+        way it came, so the next rescue drove it straight back.  Observed
+        2026-09-23 with 5 rovers: they bounced within a couple of metres of
+        spawn (scan #0 at (-2.4,-2.4) then (-1.0,-1.0) then (-0.3,-0.6)) and
+        the arena stayed at 2 % known, so the tour never unlocked.
+
+        Steering at the next tour waypoint instead always makes progress, is
+        deterministic (A/B stays fair) and widens the map along the route that
+        is about to be driven anyway.
+        """
+        px, py, _ = self._world_pose(ns)
+        fx, fy = self._goals(ns)[self.robots[ns]['idx']]
+        dx, dy = fx - px, fy - py
+        dist = math.hypot(dx, dy)
+        if dist < 1e-6:
+            return fx, fy, False
+        step = min(self.SCAN_STEP_DIST, dist)
+        sx = max(-self.ARENA_SAFE, min(self.ARENA_SAFE, px + step * dx / dist))
+        sy = max(-self.ARENA_SAFE, min(self.ARENA_SAFE, py + step * dy / dist))
         self.get_logger().info(f'[{ns}] {reason}')
         return sx, sy, False
 
@@ -360,16 +523,25 @@ class FixedGoalPublisher(Node):
 
         # Map scanned enough -> the whole arena is fair game.
         if robot['map_known'] >= self.SCAN_THRESHOLD:
+            if not robot.get('unlock_logged'):
+                robot['unlock_logged'] = True
+                self.get_logger().info(
+                    f'[{ns}] arena {robot["map_known"]*100:.0f}% known '
+                    f'(>= {self.SCAN_THRESHOLD*100:.0f}%) — tour goals unlocked')
             return fx, fy, True
 
-        # Goal close to the current pose -> already inside the scanned
-        # vicinity, safe to go straight there.
-        if math.hypot(fx - px, fy - py) <= self.SCAN_SAFE_DIST:
+        # Goal close to the current pose -> bypass the guard, but ONLY when a
+        # safe radius is configured.  SCAN_SAFE_DIST=0.0 (the default) removes
+        # the bypass completely: no fixed goal is ever sent before the arena
+        # has been scanned to SCAN_THRESHOLD.
+        if (self.SCAN_SAFE_DIST > 0.0
+                and math.hypot(fx - px, fy - py) <= self.SCAN_SAFE_DIST):
             return fx, fy, True
 
         # Out-of-map guard: forward scan goal, then the fixed goal is retried.
         return self._forward_scan_goal(
-            ns, f'map {robot["map_known"]*100:.0f}% known — goal '
+            ns, f'arena {robot["map_known"]*100:.0f}% known (need '
+                f'{self.SCAN_THRESHOLD*100:.0f}%) — goal '
                 f'({fx:.1f}, {fy:.1f}) too far into unknown space; scanning '
                 f'forward first')
 
@@ -442,7 +614,13 @@ class FixedGoalPublisher(Node):
                        self._accept_watchdog(ns, att, f))
 
     def _accept_watchdog(self, ns, attempt, future):
-        """No accept response in time -> declare the attempt lost and retry."""
+        """No accept response in time -> declare the attempt lost.
+
+        The re-send is bounded by MAX_ACCEPT_RETRIES: one lost response may be
+        re-sent, but it can no longer occupy the goal slot indefinitely.  Once
+        the budget is spent the attempt counts as a failure and the normal
+        failure battery (scan rescue, then skip) acts on that goal.
+        """
         robot = self.robots[ns]
         if not robot['busy'] or attempt != robot['attempt'] or future.done():
             return
@@ -450,10 +628,20 @@ class FixedGoalPublisher(Node):
         robot['busy'] = False
         robot['g_fail'] += 1
         self._write_goal_stats()
+        if robot['accept_retries'] < self.MAX_ACCEPT_RETRIES:
+            robot['accept_retries'] += 1
+            self.get_logger().warn(
+                f'[{ns}] no goal ACCEPT response after '
+                f'{self.ACCEPT_TIMEOUT_S:.0f}s (DDS response lost?) — re-send '
+                f'{robot["accept_retries"]}/{self.MAX_ACCEPT_RETRIES} in 5s')
+            self._schedule(5.0, lambda: self.send_goal(ns))
+            return
         self.get_logger().warn(
             f'[{ns}] no goal ACCEPT response after '
-            f'{self.ACCEPT_TIMEOUT_S:.0f}s (DDS response lost?) — retrying in 5s')
-        self._schedule(5.0, lambda: self.send_goal(ns))
+            f'{self.ACCEPT_TIMEOUT_S:.0f}s and the re-send budget is spent — '
+            f'counting goal #{robot["idx"]} as failed')
+        # g_fail was already counted above, so do not count it twice.
+        self._handle_goal_failure(ns, count_fail=False)
 
     def _goal_response_cb(self, future, ns, attempt):
         robot = self.robots[ns]
@@ -479,6 +667,7 @@ class FixedGoalPublisher(Node):
             robot['busy'] = False
             self._schedule(5.0, lambda: self.send_goal(ns))
             return
+        robot['accept_retries'] = 0    # accepted — fresh budget for this goal
         robot['goal_handle'] = goal_handle
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(lambda f, ns=ns: self._result_cb(f, ns))
@@ -491,6 +680,8 @@ class FixedGoalPublisher(Node):
         if status == GoalStatus.STATUS_SUCCEEDED:
             robot['fail_count'] = 0
             if robot['on_fixed_goal']:
+                robot['scan_used'] = False
+                robot['accept_retries'] = 0   # fresh budget for the next goal
                 robot['g_ok'] += 1
                 robot['idx'] += 1
                 self.get_logger().info(
@@ -503,25 +694,55 @@ class FixedGoalPublisher(Node):
             self._write_goal_stats()
             self._schedule(0.5, lambda: self.send_goal(ns))
         else:
-            robot['fail_count'] += 1
-            if robot['on_fixed_goal']:
-                robot['g_fail'] += 1
-            self._write_goal_stats()
-            if (robot['on_fixed_goal'] and
-                    robot['fail_count'] >= self.MAX_FAILS_BEFORE_SCAN):
-                # Stop retrying an unreachable fixed goal in place: send a
-                # forward scan goal once to widen the map, then retry.
+            self.get_logger().warn(
+                f'[{ns}] Goal finished with status {status} (not SUCCEEDED)')
+            self._handle_goal_failure(ns)
+
+    def _handle_goal_failure(self, ns, count_fail=True):
+        """Failure battery for the goal currently being attempted.
+
+        After MAX_FAILS_BEFORE_SCAN consecutive failures on a FIXED goal, one
+        forward scan goal is sent to widen the map; after MAX_FAILS_BEFORE_SKIP
+        the goal is skipped and the tour advances.  Shared by the result
+        callback and by the accept watchdog (a lost accept response counts as a
+        failure once its re-send budget is spent), so an unreachable or
+        unacknowledged goal can never eat the whole run.
+        """
+        robot = self.robots[ns]
+        robot['fail_count'] += 1
+        if count_fail and robot['on_fixed_goal']:
+            robot['g_fail'] += 1
+        self._write_goal_stats()
+        if (robot['on_fixed_goal'] and
+                robot['fail_count'] >= self.MAX_FAILS_BEFORE_SCAN):
+            if not robot['scan_used']:
+                # Stop retrying an unreachable fixed goal in place: send ONE
+                # forward scan goal to widen the map, then retry.
+                robot['scan_used'] = True
                 robot['force_scan'] = True
                 robot['fail_count'] = 0
                 self.get_logger().warn(
                     f'[{ns}] goal #{robot["idx"]} failed to plan '
-                    f'{self.MAX_FAILS_BEFORE_SCAN} times — will scan forward '
-                    f'before retrying')
+                    f'{self.MAX_FAILS_BEFORE_SCAN} times — will scan '
+                    f'forward before retrying')
             else:
+                # Even the scan-rescued retry survived a full failure battery
+                # -> genuinely unreachable for this arm: record it and advance
+                # the tour (safety net; with sanitized tours this should never
+                # fire).
+                robot['idx'] += 1
+                robot['fail_count'] = 0
+                robot['scan_used'] = False
+                robot['accept_retries'] = 0
                 self.get_logger().warn(
-                    f'[{ns}] Goal finished with status {status} (not '
-                    f'SUCCEEDED) — retrying in 5s')
-            self._schedule(5.0, lambda: self.send_goal(ns))
+                    f'[{ns}] goal #{robot["idx"] - 1} '
+                    f'SKIPPED_UNREACHABLE after '
+                    f'{self.MAX_FAILS_BEFORE_SKIP} failed attempts — '
+                    f'advancing to #{robot["idx"]}')
+                self._write_goal_stats()
+                self._schedule(0.5, lambda: self.send_goal(ns))
+                return
+        self._schedule(5.0, lambda: self.send_goal(ns))
 
     def _write_goal_stats(self):
         """Per-robot goal outcomes -> <run_dir>/goal_stats.csv.

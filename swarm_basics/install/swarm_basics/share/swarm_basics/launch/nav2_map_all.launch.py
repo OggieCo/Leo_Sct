@@ -174,13 +174,15 @@ def create_map_nodes(context, robots, map_yaml):
         # Delayed start + generous bond_timeout: lets AMCL publish {ns}/map->{ns}/odom
         # (and lidar_republish/odom_tf) come up FIRST, so embedded costmaps can
         # resolve their initial transform and Nav2 activates cleanly.
+        # Kept in step with nav2_slam_all.launch.py (2026-09-23: 60 s bond
+        # timeout, so a slow answer under 5-rover load cannot abort a bring-up).
         nodes.append(TimerAction(
             period=12.0,
             actions=[Node(
                 package='nav2_lifecycle_manager', executable='lifecycle_manager',
                 name='lifecycle_manager', namespace=ns,
                 parameters=[{'use_sim_time': False, 'autostart': True,
-                             'bond_timeout': 20.0,
+                             'bond_timeout': 60.0,
                              'attempt_respawn_reconnection': True,
                              'node_names': ['map_server', 'amcl', 'planner_server',
                                             'controller_server', 'behavior_server',

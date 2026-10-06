@@ -1,0 +1,29 @@
+digraph STOCK {
+  rankdir=TB;
+  graph [fontname="DejaVu Sans", fontsize=15, nodesep=0.35, ranksep=0.55, pad=0.3, bgcolor="white", label="Baseline — stock Nav2 tree", labelloc=t, fontcolor="#5D1715"];
+  node [shape=box, style="rounded,filled", fillcolor="#F9E9E8", color="#5D1715", fontcolor="#1A1A1A", fontname="DejaVu Sans", fontsize=12, penwidth=1.2, margin="0.14,0.07"];
+  edge [color="#666666", arrowsize=0.7, penwidth=1.0];
+  RN [label=<<B>RecoveryNode</B><BR/><I>retry up to 6×</I>>];
+  PS [label=<<B>PipelineSequence</B><BR/><I>replan while driving</I>>];
+  RC [label=<<B>RateController</B><BR/><I>1 Hz</I>>];
+  CPP [label="ComputePathToPose", fillcolor="white"];
+  FP [label="FollowPath", fillcolor="white"];
+  RF [label=<<B>ReactiveFallback</B><BR/><I>recovery fallback</I>>];
+  GU [label="GoalUpdated?", shape=oval, style=filled, fillcolor="#F5EFD9"];
+  RR [label=<<B>RoundRobin</B><BR/><I>recovery actions</I>>];
+  CL [label="Clear costmaps", fillcolor="white"];
+  SP [label="Spin (1.57 rad)", fillcolor="white"];
+  WT [label="Wait (5 s)", fillcolor="white"];
+  BK [label="Back up (0.3 m)", fillcolor="white"];
+  RN -> PS;
+  RN -> RF [style=dashed, label="on failure"];
+  PS -> RC;
+  RC -> CPP;
+  PS -> FP;
+  RF -> GU;
+  RF -> RR;
+  RR -> CL;
+  RR -> SP;
+  RR -> WT;
+  RR -> BK;
+}

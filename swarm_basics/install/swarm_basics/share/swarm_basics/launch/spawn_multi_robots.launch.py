@@ -5,6 +5,7 @@ from launch import LaunchDescription
 from launch.actions import OpaqueFunction
 from launch.actions import DeclareLaunchArgument
 from launch.actions import SetEnvironmentVariable
+from launch.actions import TimerAction
 from launch.substitutions import LaunchConfiguration
 from launch.substitutions import PythonExpression
 from launch_ros.actions import Node
@@ -27,12 +28,13 @@ def generate_launch_description():
         'enable_llm', default_value='true',
         description='Start the llm_planner decision layer (true/false)')
 
-    # bt: 'reactive' (social_nav.xml) / 'ai' (ai_nav.xml) / 'no' (stock Nav2).
-    # Only used for run-folder routing here ('no' -> logs go to Nav2/); the
-    # actual behavior tree is chosen in nav2_slam_all.launch.py.
+    # bt: 'reactive' (reactive_nav.xml) / 'ai' (social_nav.xml) / 'stock' (stock
+    # Nav2 tree; 'no' is accepted as a legacy alias).  Only used for run-folder
+    # routing here ('stock' -> logs go to Nav2/); the actual behavior tree is
+    # chosen in nav2_slam_all.launch.py.
     bt_arg = DeclareLaunchArgument(
         'bt', default_value='reactive',
-        description='Behavior layer: reactive, ai or no (run-folder routing)')
+        description='Behavior layer: reactive, ai or stock (run-folder routing)')
 
     # dynamic_plots: 'true' -> live coverage-map redraws every 0.5 s (PNGs every
     # 2 s); 'false' -> render the coverage map only once at shutdown (lighter
@@ -86,7 +88,7 @@ def generate_launch_description():
     bt = LaunchConfiguration('bt')
 
     # Route run logs into a MODE subfolder:
-    #   bt:=no        -> Nav2/    (stock Nav2, no social layer)
+    #   bt:=stock     -> Nav2/    (stock Nav2, no social layer)
     #   enable_llm:=true -> BT_LLM/
     #   else             -> BT/
     # run_utils.get_run_dir() reads SWARM_RUN_MODE so coverage_plotter,
@@ -94,7 +96,7 @@ def generate_launch_description():
     run_mode_env = SetEnvironmentVariable(
         'SWARM_RUN_MODE',
         PythonExpression([
-            "'Nav2' if '", bt, "'.lower() == 'no' else ",
+            "'Nav2' if '", bt, "'.lower() in ('no', 'stock') else ",
             "('BT_LLM' if '", enable_llm, "'.lower() == 'true' else 'BT')",
         ]),
     )
@@ -104,68 +106,86 @@ def generate_launch_description():
         nodes = []
         det = context.perform_substitution(detector)   # 'depth' or 'yolo'
         llm_on = context.perform_substitution(enable_llm).lower() in ('true', '1')
-        bt_val = context.perform_substitution(bt).lower()   # reactive / ai / no
-        pure = (bt_val == 'no')   # stock Nav2: no human-awareness nodes
+        bt_val = context.perform_substitution(bt).lower()   # reactive / ai / stock
+        pure = (bt_val in ('no', 'stock'))   # stock Nav2: no human-awareness nodes
 
-        # --- One bridge for all robots ---
-        bridge_args = []
-        for robot in robots:
-            ns = robot["ns"]
-            bridge_args += [
-                # ⬆ OUT: supervisor sends motion → bridge feeds it to Gazebo → robot drives
-                f"/{ns}/cmd_vel@geometry_msgs/msg/Twist]ignition.msgs.Twist",
-
-                # ⬇ IN: Gazebo tells where robot is → bridge publishes → odom_tf_publisher & RViz read it
-                f"/{ns}/odom@nav_msgs/msg/Odometry[ignition.msgs.Odometry",
-
-                # ⬇ IN: Gazebo broadcasts all model positions → bridge → root /tf → RViz draws the world
-                f"/tf@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V",
-
-                # ⬇ IN: Gazebo LiDAR scan (360°) → bridge → /robot_0/scan for Nav2 SLAM & costmap
-                f"/{ns}/lidar/scan@sensor_msgs/msg/LaserScan[ignition.msgs.LaserScan",
-
-                # ⬇ IN: Gazebo raw depth data → bridge → image_processor & LLM camera feed
-                f"/{ns}/depth_camera/depth_image@sensor_msgs/msg/Image@ignition.msgs.Image",
-
-                # ⬇ IN: Gazebo camera calibration → bridge → image_processor
-                f"/{ns}/depth_camera/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo",
-
-                # ⬇ IN: Gazebo rgb image → bridge → image_processor & LLM vision
-                f"/{ns}/depth_camera/image@sensor_msgs/msg/Image@ignition.msgs.Image",
-
-                # ⬇ IN: Gazebo collision sensor → bridge → bump_counter logs "ouch, I hit something"
-                f"/world/{WORLD_NAME}/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"
-                f"@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
-
-                # ⬇ IN: Gazebo wheel positions → bridge → robot_state_publisher → TF → RViz shows spinning wheels
-                f"/{ns}/joint_states@sensor_msgs/msg/JointState[ignition.msgs.Model",
-            ]
-
-        # ⬇ IN: Global pose topic for coverage_plotter
-        bridge_args += [
-            f"/world/{WORLD_NAME}/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V"
-        ]    
-
-        bridge_node = Node(
+        # --- Bridges: ONE small global bridge + ONE PER ROBOT ---
+        # (2026-09-18 load fix) A single parameter_bridge carried all ~46
+        # channels (incl. 15 camera streams) in ONE event loop; under 5-robot
+        # load that serialized the sensor pipeline — scans reached SLAM a
+        # minute+ late and were dropped ("queue is full"), no map was
+        # published and the boot gate could never pass.  Split per robot so
+        # message conversion runs in parallel.  /tf is GLOBAL (Gazebo
+        # broadcasts all model poses on one topic) — bridge it exactly once
+        # here; it used to be added 5 times (once per robot).
+        nodes.append(Node(
             package="ros_gz_bridge",
             executable="parameter_bridge",
-            name="all_robots_bridge",
-            arguments=bridge_args,
+            name="global_bridge",
+            arguments=[
+                # ⬇ IN: Gazebo broadcasts all model positions → /tf → RViz draws the world
+                "/tf@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V",
+                # ⬇ IN: Global pose topic for coverage_plotter
+                f"/world/{WORLD_NAME}/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V",
+            ],
             parameters=[{"qos_overrides./tf_static.publisher.durability": "transient_local"}],
-            output="screen"
-        )
-        nodes.append(bridge_node)
+            output="screen",
+        ))
 
-        # --- Create each robot ---
-        for robot in robots:
+        for bridge_i, robot in enumerate(robots):
+            ns = robot["ns"]
+            # Stagger (2026-09-18): robot i's bridge starts 4 s per index apart.
+            # With all 5 robots' RSPs/spawners/bridges/sensors firing in the
+            # same second, FastDDS SHM port files collided and spawners/managers
+            # starved (robot_description never reached 2 of 5 spawners).
+            nodes.append(TimerAction(
+                period=4.0 * bridge_i,
+                actions=[Node(
+                package="ros_gz_bridge",
+                executable="parameter_bridge",
+                name=f"{ns}_bridge",
+                arguments=[
+                    # ⬆ OUT: supervisor sends motion → bridge feeds it to Gazebo → robot drives
+                    f"/{ns}/cmd_vel@geometry_msgs/msg/Twist]ignition.msgs.Twist",
+                    # ⬇ IN: Gazebo tells where robot is → bridge → odom_tf_publisher & RViz read it
+                    f"/{ns}/odom@nav_msgs/msg/Odometry[ignition.msgs.Odometry",
+                    # ⬇ IN: Gazebo LiDAR scan (360°) → bridge → Nav2 SLAM & costmap
+                    f"/{ns}/lidar/scan@sensor_msgs/msg/LaserScan[ignition.msgs.LaserScan",
+                    # ⬇ IN: Gazebo raw depth data → bridge → image_processor & LLM camera feed
+                    f"/{ns}/depth_camera/depth_image@sensor_msgs/msg/Image@ignition.msgs.Image",
+                    # ⬇ IN: Gazebo camera calibration → bridge → image_processor
+                    f"/{ns}/depth_camera/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo",
+                    # ⬇ IN: Gazebo rgb image → bridge → image_processor & LLM vision
+                    f"/{ns}/depth_camera/image@sensor_msgs/msg/Image@ignition.msgs.Image",
+                    # ⬇ IN: Gazebo collision sensor → bridge → bump_counter logs "ouch, I hit something"
+                    f"/world/{WORLD_NAME}/model/{ns}/link/{ns}/base_footprint/sensor/contact_sensor/contact"
+                    f"@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
+                    # ⬇ IN: Gazebo wheel positions → bridge → robot_state_publisher → TF → RViz shows spinning wheels
+                    f"/{ns}/joint_states@sensor_msgs/msg/JointState[ignition.msgs.Model",
+                ],
+                parameters=[{"qos_overrides./tf_static.publisher.durability": "transient_local"}],
+                output="screen",
+                )],
+            ))
+
+        # --- Create each robot (staggered 4 s per index, with its bridge) ---
+        for robot_i, robot in enumerate(robots):
             ns = robot["ns"]
             x = robot["x"]
             y = robot["y"]
             yaw = robot["yaw"]
 
-            # URDF with per-robot namespace mapping
+            # URDF with per-robot namespace mapping.  Sensor rates come from the
+            # environment so a run can trade fidelity for real-time factor
+            # (SWARM_LIDAR_HZ / SWARM_CAMERA_HZ; defaults keep 10 Hz / 5 Hz).
             xacro_file = os.path.join(leo_description, 'urdf', 'leo_sim.urdf.xacro')
-            doc = xacro.process_file(xacro_file, mappings={"robot_ns": ns})
+            doc = xacro.process_file(xacro_file, mappings={
+                "robot_ns": ns,
+                "lidar_rate": os.environ.get("SWARM_LIDAR_HZ", "10"),
+                "camera_rate": os.environ.get("SWARM_CAMERA_HZ", "5"),
+                "camera_width": os.environ.get("SWARM_CAMERA_W", "640"),
+                "camera_height": os.environ.get("SWARM_CAMERA_H", "480"),
+            })
             robot_description = doc.toxml()
 
             # State publisher (per robot)
@@ -181,7 +201,14 @@ def generate_launch_description():
                 output="screen"
             )
 
-            # Spawn robot in Gazebo
+            # Spawn robot in Gazebo.
+            # 2026-09-18: spawn from the URDF STRING directly (same XML the RSP
+            # publishes) instead of via the latched /robot_description topic.
+            # The latched DDS delivery intermittently failed (spawner waited
+            # forever, robot never appeared — hit both headless and GUI boots),
+            # which stalled the whole bringup.  The string path has no DDS
+            # dependency; `create` retries the factory service until the
+            # gz server is up.
             spawn_node = Node(
                 package="ros_gz_sim",
                 executable="create",
@@ -192,7 +219,7 @@ def generate_launch_description():
                     "-y", str(y),
                     "-z", "0.1",
                     "-Y", str(yaw),
-                    "-topic", f"/{ns}/robot_description"
+                    "-string", robot_description
                 ],
                 output="screen"
             )
@@ -227,7 +254,7 @@ def generate_launch_description():
             #   depth = image_human_processor (blob heuristics, leo_image)
             #   yolo  = yolo_human_processor (YOLOv8n on RGB + depth ranging)
             # Both publish human_detected / human_close / human_distance / human_angle.
-            # Skipped in pure Nav2 (bt:=no): no social layer consumes human data.
+            # Skipped in pure Nav2 (bt:=stock): no social layer consumes human data.
             if pure:
                 human_node = None
             elif det == 'yolo':
@@ -260,7 +287,7 @@ def generate_launch_description():
             )
 
             # Dynamic speed slowing near humans/robots (scales controller
-            # cmd_vel). Disabled in pure Nav2 (bt:=no): the stock Nav2 baseline
+            # cmd_vel). Disabled in pure Nav2 (bt:=stock): the stock Nav2 baseline
             # must have NO human/robot awareness, so the controller writes
             # /cmd_vel directly (see nav2_slam_all.launch.py) and rovers only
             # avoid what the lidar costmap sees.
@@ -324,26 +351,60 @@ def generate_launch_description():
                 output="screen",
             )
 
-            # Depth → laser scan — kept for LLM/SCT use, LiDAR is now the primary scan for Nav2
-            depth_to_scan = Node(
-                package="swarm_basics",
-                executable="depth_to_scan_custom",
-                name="depth_to_scan",
-                namespace=ns,
-                parameters=[{
-                    "use_sim_time": True,
-                }],
-                output="screen",
-            )
+            # Depth → laser scan.  VESTIGIAL as of 2026-09-23: both costmaps
+            # (obstacle_layer.scan.topic = /{ns}/lidar/scan_clean) and SLAM
+            # (remap 'scan' -> /{ns}/lidar/scan_clean) use the LiDAR scan, and
+            # nothing subscribes to the depth-derived /{ns}/scan.  Producing it
+            # costs one Python node per rover (depth image -> LaserScan), so it
+            # is skipped by default; export SWARM_NO_DEPTH_TO_SCAN=0 to keep it.
+            if os.environ.get("SWARM_NO_DEPTH_TO_SCAN", "1") == "0":
+                depth_to_scan = Node(
+                    package="swarm_basics",
+                    executable="depth_to_scan_custom",
+                    name="depth_to_scan",
+                    namespace=ns,
+                    parameters=[{
+                        "use_sim_time": True,
+                    }],
+                    output="screen",
+                )
+            else:
+                depth_to_scan = None
 
-            # All per-robot nodes: LiDAR + RealSense + bump + odom + lidar_republish
-            # + depth_to_scan + human detector + velocity_adaptor + robot_proximity
-            # (+ llm_planner if enabled).  Pure Nav2 (bt:=no) drops the human
-            # awareness nodes entirely.
-            per_robot = [state_pub, spawn_node, human_node, bump_node,
+            # All per-robot nodes EXCEPT the human detector (deferred below):
+            # LiDAR + RealSense + bump + odom + lidar_republish + depth_to_scan
+            # + velocity_adaptor + robot_proximity (+ llm_planner if enabled).
+            # Pure Nav2 (bt:=stock) drops the human awareness nodes entirely.
+            per_robot = [state_pub, spawn_node, bump_node,
                          velocity_adaptor_node, robot_proximity_node,
                          odom_tf_node, lidar_republish_node, depth_to_scan]
-            nodes += [n for n in per_robot if n is not None]
+            # Stagger per robot (same 4 s/index cadence as its bridge) so the
+            # RSP + spawn + sensor-node startup burst is spread over time.
+            nodes.append(TimerAction(
+                period=4.0 * robot_i,
+                actions=[n for n in per_robot if n is not None],
+            ))
+
+            # Human detector, DELAYED by SWARM_DETECTOR_DELAY_S seconds
+            # (run_parallel.py --detector-delay, default 45 s; 0 = old
+            # behaviour).  It costs a torch/YOLO model load, a CUDA context and
+            # one more DDS participant per robot, and consumes nothing until
+            # goals start — so keeping it OUT of the bring-up window matters:
+            # with 5 rovers that window already carries ~45 DDS participants,
+            # and discovery starvation there is exactly what leaves lifecycle
+            # managers stuck on "Waiting for service .../get_state".
+            if human_node is not None:
+                det_delay = float(
+                    os.environ.get("SWARM_DETECTOR_DELAY_S", "0") or 0.0)
+                # period = 4 s per robot + the delay.  The delay must clear the
+                # WHOLE Nav2 stagger (nav2_slam_all.launch.py: 20 s + 12 s per
+                # robot, so the last stack starts at 68 s and finishes ~100 s):
+                # loading 5 YOLO models + CUDA contexts + DDS participants
+                # inside that window is what aborted bring-up on 2026-09-23.
+                nodes.append(TimerAction(
+                    period=4.0 * robot_i + det_delay,
+                    actions=[human_node],
+                ))
 
         return nodes
 

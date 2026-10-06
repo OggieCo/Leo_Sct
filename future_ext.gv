@@ -1,0 +1,12 @@
+digraph FUT {
+  rankdir=LR;
+  graph [fontname="DejaVu Sans", fontsize=14, nodesep=0.5, ranksep=0.95, pad=0.3, bgcolor="white", label="Future extensions", labelloc=t, fontcolor="#5D1715"];
+  node [shape=box, style="rounded,filled", fillcolor="#F9E9E8", color="#5D1715", fontcolor="#1A1A1A", fontname="DejaVu Sans", fontsize=12.5, penwidth=1.2, margin="0.15,0.08"];
+  edge [color="#666666", fontname="DejaVu Sans", fontsize=10.5, arrowsize=0.7, penwidth=1.0];
+  CAM [label=<<B>camera streams</B><BR/><I>now: converted to text first</I>>, fillcolor="#E8E8E8"];
+  VLM [label=<<B>vision-capable LLM</B><BR/><I>interprets images directly</I>>, fillcolor="#5D1715", fontcolor="white"];
+  R0 [label=<<B>robot_0 LLM agent</B>>];
+  R1 [label=<<B>robot_1 LLM agent</B>>];
+  CAM -> VLM [label="images, not text"];
+  R0 -> R1 [dir=both, label="peer-to-peer negotiation"];
+}

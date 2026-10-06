@@ -35,6 +35,13 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool, Float32
 
+# Stale-cap watchdog: if the LLM speed cap stays at ~0 longer than this while
+# the controller is demanding motion, treat it as a stale stop/yield latch
+# and release it (run_2026-09-14_09-49-07: the cap froze at 0 after a stop
+# while the model kept deciding "proceed" — DWB commanded motion but every
+# command was scaled to 0 and two rovers parked 0.75 m apart for 80 s+).
+LLM_ZERO_TIMEOUT_S = 8.0
+
 
 class VelocityAdaptor(Node):
     def __init__(self):
@@ -83,6 +90,9 @@ class VelocityAdaptor(Node):
         self._sub_rang = self.create_subscription(Float32, 'robot_angle', self.rang_cb, 10)
         # LLM soft speed cap (llm_planner): 0..1, 1 = no limit from the AI
         self._llm_scale = 1.0
+        # Stale-cap watchdog state (see LLM_ZERO_TIMEOUT_S).
+        self._llm_zero_since = None
+        self._llm_zero_warned = False
         self._sub_llm = self.create_subscription(Float32, 'llm_speed_scale', self.llm_cb, 10)
         # Speed FLOOR (llm_planner): 0..1, 0 = no floor.  While one of OUR
         # maneuvers is active (arc commit) or we hold the right-of-way over a
@@ -146,7 +156,13 @@ class VelocityAdaptor(Node):
         self._robot_angle = float(msg.data)
 
     def llm_cb(self, msg):
-        self._llm_scale = max(0.0, min(1.0, float(msg.data)))
+        v = max(0.0, min(1.0, float(msg.data)))
+        if v > 0.02:
+            self._llm_zero_since = None
+            self._llm_zero_warned = False
+        elif self._llm_zero_since is None:
+            self._llm_zero_since = time.time()
+        self._llm_scale = v
 
     def floor_cb(self, msg):
         self._floor = max(0.0, min(1.0, float(msg.data)))
@@ -263,7 +279,27 @@ class VelocityAdaptor(Node):
         # floor applied (an active arc / right-of-way holder may not be
         # strangled by the proximity brake), then the LLM cap (stop/yield
         # still wins: llm_scale == 0 multiplies everything to 0).
-        s = self._scale() * max(self._robot_scale(), self._floor) * self._llm_scale
+        llm = self._llm_scale
+        if (llm <= 0.02 and self._llm_zero_since is not None
+                and abs(msg.linear.x) > 0.02
+                and time.time() - self._llm_zero_since > LLM_ZERO_TIMEOUT_S):
+            # STALE-CAP WATCHDOG (run_2026-09-14_09-49-07): a stop/yield
+            # latch in llm_planner left llm_speed_scale at 0 while the model
+            # kept deciding "proceed"; the adaptor log showed
+            # human_dist=inf, robot term fine, floor=0, scale=0.00 — the LLM
+            # cap alone froze the rover permanently.  Stops/yields are
+            # designed to last seconds; a longer zero with motion demanded
+            # is a stale latch -> release it.  The human/robot terms below
+            # still apply, so the physical safety layers keep braking.
+            llm = 1.0
+            if not self._llm_zero_warned:
+                self._llm_zero_warned = True
+                self.get_logger().warn(
+                    f'llm_speed_scale stuck at 0 for '
+                    f'{time.time() - self._llm_zero_since:.0f}s while the '
+                    f'controller demands motion — stale stop/yield latch, '
+                    f'releasing (treated as 1.0).')
+        s = self._scale() * max(self._robot_scale(), self._floor) * llm
         out = Twist()
         out.linear.x = msg.linear.x * s
         out.linear.y = msg.linear.y * s
@@ -282,7 +318,8 @@ class VelocityAdaptor(Node):
             self.get_logger().info(
                 f'slowing: scale={s:.2f} human_dist={self._dist:.2f} '
                 f'robot_dist={self._robot_dist:.2f} '
-                f'robot_angle={self._robot_angle:+.1f} floor={self._floor:.2f}',
+                f'robot_angle={self._robot_angle:+.1f} floor={self._floor:.2f} '
+                f'llm={llm:.2f}',
                 throttle_duration_sec=0.5)
 
 

@@ -89,7 +89,7 @@ def generate_launch_description():
     bt_arg = DeclareLaunchArgument(
         "bt",
         default_value="reactive",
-        description="Behavior layer: reactive, ai or no (bt:=no logs runs to Nav2/)",
+        description="Behavior layer: reactive, ai or stock (bt:=stock logs runs to Nav2/)",
     )
 
     dynamic_plots_arg = DeclareLaunchArgument(
@@ -121,7 +121,16 @@ def generate_launch_description():
         }.items(),
     )
 
-    # Bridge ROS topics and Gazebo messages for establishing communication
+    # Bridge ROS topics and Gazebo messages for establishing communication.
+    # The clock's ROS side is REMAPPED to /clock_raw on purpose: Gazebo emits
+    # one Clock message per physics step and the bridge forwards every one.
+    # MEASURED 2026-09-23 with 4 rovers: 383 Hz.  Every use_sim_time:=true node
+    # subscribes, so ~15 nodes/rover x 383 Hz is tens of thousands of callbacks
+    # per second whose only job is advancing the clock — enough to starve TF,
+    # slam_toolbox and the Nav2 lifecycle service calls (symptoms: costmaps
+    # stuck in 'Activating' with their clock frozen at 0.7 s, 'queue is full'
+    # scan drops, 'get_state' timeouts aborting bringup).  clock_throttle
+    # republishes it as /clock at a sane rate.
     topic_bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
@@ -129,11 +138,30 @@ def generate_launch_description():
         arguments=[
             "/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock",
         ],
+        remappings=[("/clock", "/clock_raw")],
         parameters=[
             {
                 "qos_overrides./tf_static.publisher.durability": "transient_local",
             }
         ],
+        output="screen",
+    )
+
+    # /clock_raw (physics rate, ~383 Hz) -> /clock (SWARM_CLOCK_HZ, default
+    # 50 Hz).  Sim time only needs to advance smoothly: control runs at 20 Hz
+    # and the Nav2 BT tick at 100 Hz, so 50 Hz costs nothing and removes ~87 %
+    # of the clock traffic.  0 disables the relay (clock stays on /clock_raw and
+    # nothing has sim time — only useful for diagnosing the bridge itself).
+    clock_hz = float(os.environ.get("SWARM_CLOCK_HZ", "50") or 50.0)
+    clock_relay = Node(
+        package="swarm_basics",
+        executable="clock_throttle",
+        name="clock_throttle",
+        parameters=[{
+            "input_topic": "/clock_raw",
+            "output_topic": "/clock",
+            "rate_hz": clock_hz if clock_hz > 0 else 50.0,
+        }],
         output="screen",
     )
 
@@ -150,5 +178,6 @@ def generate_launch_description():
             gz_sim,
             spawn_robot,
             topic_bridge,
+            clock_relay,
         ]
     )

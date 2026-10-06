@@ -16,7 +16,8 @@ Writes into the SAME run folder as coverage_plotter
                       ROBOT_NEAR, ROBOT_GONE, BT (details = BT event text),
                       BUMP, BACKWARD_START, BACKWARD_END
 
-  social_summary.csv  per-robot event counts at shutdown:
+  social_summary.csv  per-robot event counts, rewritten on every event so
+                      the file stays correct under any shutdown path:
                       robot_id,event_type,count
 
 Subscribes to /{ns}/human_* (YOLO), /{ns}/robot_* (robot_proximity),
@@ -25,6 +26,7 @@ world pose topic and the per-robot contact sensor.
 """
 
 import math
+import os
 import time
 
 import rclpy
@@ -75,6 +77,7 @@ class SocialEventLogger(Node):
             f.write(EVENT_HEADER + '\n')
         with open(self.summary_path, 'w') as f:
             f.write('robot_id,event_type,count\n')
+        self.counts = {}   # (ns, etype) -> count, mirrored to summary live
 
         self.robots = [f'robot_{i}' for i in range(10)]
         # per-robot stored state
@@ -218,6 +221,26 @@ class SocialEventLogger(Node):
         line = f'{self.now():.3f},{self.elapsed():.3f},{ns},{etype},{details}'
         with open(self.event_path, 'a') as f:
             f.write(line + '\n')
+        key = (ns, etype)
+        self.counts[key] = self.counts.get(key, 0) + 1
+        self._write_summary()
+
+    def _write_summary(self, counts=None):
+        """Rewrite social_summary.csv (atomic replace).
+
+        Rewriting on every event keeps the summary correct no matter how the
+        process ends.  The previous implementation wrote it only from the
+        KeyboardInterrupt handler, so runs stopped by the harness (SIGTERM,
+        pattern-kill, timeout escalation) left the file header-only.
+        """
+        if counts is None:
+            counts = self.counts
+        tmp = self.summary_path + '.tmp'
+        with open(tmp, 'w') as f:
+            f.write('robot_id,event_type,count\n')
+            for (ns, etype), c in sorted(counts.items()):
+                f.write(f'{ns},{etype},{c}\n')
+        os.replace(tmp, self.summary_path)
 
     def state_tick(self):
         with open(self.state_path, 'a') as f:
@@ -259,6 +282,9 @@ class SocialEventLogger(Node):
 
     # ---- shutdown summary -----------------------------------------------
     def on_shutdown(self):
+        # Rebuild from the event file (authoritative) and REWRITE rather than
+        # append, so a second call cannot duplicate rows now that the summary
+        # is already kept up to date during the run.
         counts = {}
         with open(self.event_path) as f:
             next(f)
@@ -267,9 +293,8 @@ class SocialEventLogger(Node):
                 if len(parts) >= 4:
                     ns, etype = parts[2], parts[3]
                     counts[(ns, etype)] = counts.get((ns, etype), 0) + 1
-        with open(self.summary_path, 'a') as f:
-            for (ns, etype), c in sorted(counts.items()):
-                f.write(f'{ns},{etype},{c}\n')
+        self.counts = counts
+        self._write_summary()
         self.get_logger().info('SocialEventLogger: summary written')
 
 

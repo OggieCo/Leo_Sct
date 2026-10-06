@@ -13,6 +13,8 @@ Run:
     ros2 launch swarm_basics nav2_map_all.launch.py
     # or with a specific map:
     ros2 launch swarm_basics nav2_map_all.launch.py map:=/path/to/map.yaml
+    # behaviour tree is selectable exactly like in nav2_slam_all.launch.py:
+    ros2 launch swarm_basics nav2_map_all.launch.py bt:=reactive|ai|stock
 """
 
 import os
@@ -97,15 +99,35 @@ def write_costmap_params_file(ns, params):
     return path
 
 
-def create_map_nodes(context, robots, map_yaml):
+def create_map_nodes(context, robots, map_yaml, bt='reactive'):
+    # Which behaviour tree (same mapping as nav2_slam_all.launch.py):
+    #   reactive -> reactive_nav.xml (pure reactive social reflexes)
+    #   ai       -> social_nav.xml (BT + LLM decision layer)
+    #   stock    -> Nav2's stock navigate_to_pose tree
+    #               ('no' is accepted as a legacy alias)
+    if bt == 'ai':
+        bt_xml = '/root/ros2_ws/src/swarm_basics/config/bt/social_nav.xml'
+    elif bt in ('no', 'stock'):
+        bt_xml = os.path.join(
+            get_package_share_directory('nav2_bt_navigator'),
+            'behavior_trees',
+            'navigate_to_pose_w_replanning_and_recovery.xml')
+    else:  # reactive
+        bt_xml = '/root/ros2_ws/src/swarm_basics/config/bt/reactive_nav.xml'
+
     nodes = []
 
     for ns, _, _, _ in robots:
         params = per_robot_params(ns)
+        params['default_nav_to_pose_bt_xml'] = bt_xml
         costmap_file = write_costmap_params_file(ns, params)
         # Clean scan topic: {ns}/lidar/scan_clean is republished with frame {ns}/lidar_link
         scan_topic = f'/{ns}/lidar/scan_clean'
-        cmd_vel_topic = f'/{ns}/cmd_vel'
+        # Social configurations route the controller output through the
+        # velocity adaptor (cmd_vel_social -> adaptor -> cmd_vel);
+        # stock drives the wheels directly.
+        cmd_vel_topic = (f'/{ns}/cmd_vel' if bt in ('no', 'stock')
+                         else f'/{ns}/cmd_vel_social')
         odom_topic = f'/{ns}/odom'
 
         # Map server — loads the pre-made map, publishes it on /{ns}/map (Transient Local)
@@ -174,13 +196,15 @@ def create_map_nodes(context, robots, map_yaml):
         # Delayed start + generous bond_timeout: lets AMCL publish {ns}/map->{ns}/odom
         # (and lidar_republish/odom_tf) come up FIRST, so embedded costmaps can
         # resolve their initial transform and Nav2 activates cleanly.
+        # Kept in step with nav2_slam_all.launch.py (2026-09-23: 60 s bond
+        # timeout, so a slow answer under 5-rover load cannot abort a bring-up).
         nodes.append(TimerAction(
             period=12.0,
             actions=[Node(
                 package='nav2_lifecycle_manager', executable='lifecycle_manager',
                 name='lifecycle_manager', namespace=ns,
                 parameters=[{'use_sim_time': False, 'autostart': True,
-                             'bond_timeout': 20.0,
+                             'bond_timeout': 60.0,
                              'attempt_respawn_reconnection': True,
                              'node_names': ['map_server', 'amcl', 'planner_server',
                                             'controller_server', 'behavior_server',
@@ -235,13 +259,21 @@ def generate_launch_description():
         default_value=default_map,
         description='Path to the pre-made map YAML (image + pgm next to it).',
     )
+    bt_arg = DeclareLaunchArgument(
+        'bt', default_value='reactive',
+        description='reactive (reactive_nav.xml), ai (social_nav.xml, BT+LLM) '
+                    'or stock (stock Nav2 navigate_to_pose; "no" is accepted as '
+                    'legacy alias)',
+    )
     robot_list = [(ns, x, y, yaw) for ns, x, y, yaw in ROBOT_POSITIONS]
 
     def build(ctx):
         map_yaml = LaunchConfiguration('map').perform(ctx)
-        return create_map_nodes(ctx, robot_list, map_yaml)
+        bt_value = LaunchConfiguration('bt').perform(ctx)
+        return create_map_nodes(ctx, robot_list, map_yaml, bt_value)
 
     return LaunchDescription([
         map_arg,
+        bt_arg,
         OpaqueFunction(function=build),
     ])

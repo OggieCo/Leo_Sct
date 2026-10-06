@@ -1,0 +1,3 @@
+robot_id,goals_sent,goals_succeeded,goals_failed,scan_goals
+robot_0,2,1,0,1
+robot_1,0,0,0,2

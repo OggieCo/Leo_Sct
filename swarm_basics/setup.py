@@ -26,9 +26,9 @@ setup(
         ('share/' + package_name + '/config/nav2', ['config/nav2/slam_toolbox.yaml']),
         ('share/' + package_name + '/config/nav2', ['config/nav2/nav2_generic.yaml']),
 
-        #behavior tree files (social_nav.xml = reactive baseline, ai_nav.xml = LLM-driven)
+        # behavior tree files (reactive_nav.xml = reactive baseline, social_nav.xml = LLM-driven)
+        ('share/' + package_name + '/config/bt', ['config/bt/reactive_nav.xml']),
         ('share/' + package_name + '/config/bt', ['config/bt/social_nav.xml']),
-        ('share/' + package_name + '/config/bt', ['config/bt/ai_nav.xml']),
         ('share/' + package_name + '/config/bt', ['config/bt/navigate_to_pose_w_replanning_and_recovery.xml']),
 
         ('share/' + package_name + '/config', ['config/supervisor.yaml']),
@@ -65,6 +65,9 @@ setup(
             'robot_proximity = swarm_basics.robot_proximity:main',
             'social_event_logger = swarm_basics.social_event_logger:main',
             'llm_planner = swarm_basics.llm_planner:main',
+            # Gazebo publishes one Clock per physics step (~383 Hz observed with
+            # 4 rovers); this relays it to /clock at SWARM_CLOCK_HZ (50 Hz).
+            'clock_throttle = swarm_basics.clock_throttle:main',
         ],
     },
 )

@@ -23,8 +23,16 @@
     goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]
     progress_checker.plugin: "nav2_controller::SimpleProgressChecker"
-    progress_checker.required_movement_radius: 0.5
-    progress_checker.movement_time_allowance: 10.0
+    # 0.5 m of travel required every 10 s is too strict for a SOCIAL arm: when
+    # the BT yields to a human it deliberately stands still (Wait 1 s loops),
+    # the progress checker then fails FollowPath, the BT burns its 6 retries on
+    # backup/wait/spin and finally ABORTS the goal ('Aborting handle.' x27 in
+    # the 2026-09-23 5-rover run, 0 goals completed).  With 5 rovers + 3 humans
+    # in a 15x15 m arena a rover is yielding or queueing most of the time, so
+    # the allowance must cover a deliberate social pause, not just a stuck
+    # wheel.  Applied to ALL arms (same file) -> the A/B stays fair.
+    progress_checker.required_movement_radius: 0.25
+    progress_checker.movement_time_allowance: 30.0
     general_goal_checker.plugin: "nav2_controller::SimpleGoalChecker"
     general_goal_checker.stateful: True
     general_goal_checker.xy_goal_tolerance: 0.25
@@ -69,9 +77,9 @@
     FollowPath.RotateToGoal.lookahead_time: -1.0
 
     # ---- BT Navigator ----
-    # social_nav.xml: stock replan+recovery wrapped with a social yield layer.
-    # See swarm_basics/config/bt/social_nav.xml for structure and testing notes.
-    default_nav_to_pose_bt_xml: "/root/ros2_ws/src/swarm_basics/config/bt/social_nav.xml"
+    # reactive_nav.xml: stock replan+recovery wrapped with a social yield layer.
+    # Per-robot override happens in nav2_slam_all.launch.py (bt:= arg).
+    default_nav_to_pose_bt_xml: "/root/ros2_ws/src/swarm_basics/config/bt/reactive_nav.xml"
     bt_loop_duration: 10
     default_server_timeout: 20
     plugin_lib_names:

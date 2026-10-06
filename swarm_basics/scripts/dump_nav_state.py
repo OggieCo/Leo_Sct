@@ -17,13 +17,20 @@ from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid, Odometry
 from tf2_msgs.msg import TFMessage
 
-ROBOTS = ('robot_0', 'robot_1', 'robot_2')
-# spawn poses (world) from scenario json -> world->map transform
-SPAWNS = {
-    'robot_0': (-4.5, -4.5, 0.7854),
-    'robot_1': (4.5, -4.5, 2.3562),
-    'robot_2': (-4.5, 4.5, -0.7854),
-}
+# Robot set + spawn poses come from the shared config (scenario-driven, so
+# 1..5 rovers all work); fallback = old 3-rover layout if the package is not
+# importable (script run without sourcing install/setup.bash).
+try:
+    from swarm_basics.robot_config import ROBOT_POSITIONS
+    ROBOTS = tuple(ns for ns, *_ in ROBOT_POSITIONS)
+    SPAWNS = {ns: (x, y, yaw) for ns, x, y, yaw in ROBOT_POSITIONS}
+except Exception:
+    ROBOTS = ('robot_0', 'robot_1', 'robot_2')
+    SPAWNS = {
+        'robot_0': (-4.5, -4.5, 0.7854),
+        'robot_1': (4.5, -4.5, 2.3562),
+        'robot_2': (-4.5, 4.5, -0.7854),
+    }
 HUMANS = ('human_1', 'human_2', 'human_1_bumper', 'human_2_bumper')
 START = (1.2, 0.0)   # where robots 0/1 stalled (map frame)
 GOAL = (3.0, 0.0)    # fixed_goals scan goal #0 (map frame)

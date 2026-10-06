@@ -1,0 +1,28 @@
+digraph FB {
+  rankdir=LR;
+  graph [fontname="DejaVu Sans", fontsize=14, nodesep=0.35, ranksep=0.8, pad=0.25, bgcolor="white", label="Feedback loop: sensors → back into planning", labelloc=t, fontcolor="#5D1715"];
+  node [shape=box, style="rounded,filled", fillcolor="#F4F4F4", color="#5D1715", fontcolor="#1A1A1A", fontname="DejaVu Sans", fontsize=12.5, penwidth=1.2, margin="0.15,0.08", height=0.4];
+  edge [color="#666666", fontname="DejaVu Sans", fontsize=10, arrowsize=0.7, penwidth=1.0];
+
+  DD [label="diff-drive plugin", fillcolor="#E8E8E8"];
+  BR [label="ros_gz_bridge", fillcolor="#E8E8E8"];
+  OT [label="odom_tf_publisher (ours)", fillcolor="#5D1715", fontcolor="white"];
+  RSP [label="robot_state_publisher"];
+  LR [label="lidar_republish (ours)", fillcolor="#5D1715", fontcolor="white"];
+  TF [label="/tf", fillcolor="white"];
+  SLAM [label="slam_toolbox"];
+  CM [label="costmaps"];
+  NEXT [label="next planning cycle", fillcolor="white"];
+
+  DD -> BR [label="odom · 20 Hz"];
+  BR -> OT [label="odom"];
+  BR -> RSP [label="joint_states"];
+  BR -> LR [label="scan"];
+  OT -> TF [label="odom → base_footprint"];
+  RSP -> TF [label="wheels / rockers"];
+  LR -> SLAM [label="scan_clean"];
+  SLAM -> CM [label="map + map → odom"];
+  LR -> CM [label="scan_clean"];
+  TF -> CM [label="pose"];
+  CM -> NEXT [style=dashed, label="replan"];
+}

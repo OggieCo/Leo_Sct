@@ -1,0 +1,109 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="llm-social-layer" name="LLM social layer">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="1050" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="p1" value="Human detector (YOLO)&lt;br&gt;human_detected, human_close,&lt;br&gt;human_distance, human_angle" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef4fb;strokeColor=#6f9fd8;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="350" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="p2" value="Robot proximity&lt;br&gt;nearest_robot_dist, robot_angle&lt;br&gt;(distance and bearing of nearest rover)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef4fb;strokeColor=#6f9fd8;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="430" y="40" width="350" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="p3" value="LiDAR scan&lt;br&gt;free space ahead,&lt;br&gt;rear sector for reversing" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef4fb;strokeColor=#6f9fd8;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="820" y="40" width="380" height="76" as="geometry" />
+        </mxCell>
+
+        <mxCell id="planner" value="llm_planner — ROS 2 node (4 Hz evaluation loop)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f7fbf7;strokeColor=#77b077;fontSize=13;verticalAlign=top;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="168" width="760" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" value="Situation signature — 13 parameters&lt;br&gt;updated at 4 Hz and compared with the previous tick" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#77b077;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="70" y="210" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="g1" value="Five gates — all must pass:&lt;br&gt;G1  arc maneuver in flight?&lt;br&gt;G2  robot or human present?&lt;br&gt;G3  signature changed?&lt;br&gt;G4  ≥ 2.5 s since the last call?&lt;br&gt;G5  worker thread idle?" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#77b077;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="70" y="300" width="330" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="noteGates" value="If any gate fails, no model call is made:&lt;br&gt;the previous decision remains in force&lt;br&gt;(or proceed / Path clear when nothing is present)." style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontStyle=2;fontColor=#555555;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="420" y="400" width="360" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="w1" value="API request in worker thread&lt;br&gt;(non-blocking; one call at a time)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#77b077;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="70" y="470" width="330" height="68" as="geometry" />
+        </mxCell>
+        <mxCell id="l1" value="Decision log (CSV)&lt;br&gt;action, reason, tokens, cost" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fdf6e0;strokeColor=#cfa84f;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="460" y="330" width="310" height="68" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="Publish llm_action / llm_reason&lt;br&gt;(action + one-line reason)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4ecfb;strokeColor=#9b7fc9;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="460" y="470" width="310" height="68" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cloud" value="OpenAI API — GPT-4o mini&lt;br&gt;cloud-hosted, stateless call per decision&lt;br&gt;temperature 0, max 80 output tokens" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;fillColor=#fdf6e3;strokeColor=#d9b26a;dashed=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="870" y="445" width="360" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="bb" value="CheckLlmAction → blackboard&lt;br&gt;action + reason stored for the tree" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4ecfb;strokeColor=#9b7fc9;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="620" width="330" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="bt" value="social_nav.xml behaviour tree&lt;br&gt;1  robot-avoid arc (highest priority)&lt;br&gt;2  LLM branch — seven actions (Table 3.1)&lt;br&gt;3  reactive rules — fallback when no match" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4ecfb;strokeColor=#9b7fc9;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="420" y="600" width="500" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="noteBypass" value="Arc / BackUp bypass the adaptor:&lt;br&gt;they publish directly to cmd_vel." style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontStyle=2;fontColor=#555555;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="940" y="610" width="280" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="d1" value="DWB controller (via FollowPath)&lt;br&gt;publishes cmd_vel_social" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f1f1;strokeColor=#8a8a8a;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="780" width="300" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="d2" value="velocity adaptor&lt;br&gt;scales commands by proximity&lt;br&gt;(humans, rovers) and by the LLM cap" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f1f1;strokeColor=#8a8a8a;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="420" y="780" width="330" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="d3" value="cmd_vel&lt;br&gt;rover wheels" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f1f1;strokeColor=#8a8a8a;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="830" y="780" width="270" height="76" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4a4a4a;" edge="1" parent="1" source="p1" target="s1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4a4a4a;" edge="1" parent="1" source="p2" target="s1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4a4a4a;" edge="1" parent="1" source="p3" target="s1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4a4a4a;" edge="1" parent="1" source="s1" target="g1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4a4a4a;" edge="1" parent="1" source="g1" target="w1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge6" value="logged" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4a4a4a;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="e1" target="l1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge7" value="request: system prompt + situation report" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4a4a4a;dashed=1;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="w1" target="cloud">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge8" value="response (JSON)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4a4a4a;dashed=1;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cloud" target="e1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4a4a4a;" edge="1" parent="1" source="e1" target="bb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4a4a4a;" edge="1" parent="1" source="bb" target="bt">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge11" value="FollowPath" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4a4a4a;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="bt" target="d1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge12" value="Arc / BackUp: direct" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4a4a4a;dashed=1;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="bt" target="d3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge13" value="cmd_vel_social" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4a4a4a;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="d1" target="d2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge14" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4a4a4a;" edge="1" parent="1" source="d2" target="d3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

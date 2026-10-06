@@ -247,8 +247,8 @@ public:
       avoid_until_s_ = now + avoid_window_s_;
       publish_event("ROBOT_AVOID_START");
       config().blackboard->set("robot_avoid", true);
-      // The ai tree (ai_nav.xml) consumes {robot_avoid} atomically; the
-      // reactive tree (social_nav.xml) consumes {just_yielded} for its own
+      // The ai tree (social_nav.xml) consumes {robot_avoid} atomically; the
+      // reactive tree (reactive_nav.xml) consumes {just_yielded} for its own
       // ArcOrFollow.  Setting both keeps the shared node tree-agnostic.
       config().blackboard->set("just_yielded", true);
     }

@@ -3,11 +3,11 @@
 //
 // Subscribes to the robot's `lidar/scan_clean` (sensor_msgs/LaserScan) and
 // reports SUCCESS when the nearest obstacle in the REAR sector
-// (|bearing| >= 180 - rear_half_deg, i.e. behind the rover) is farther than
-// clear_dist (m).  Gates the LLM "back" action so the rover never reverses
-// into a wall, human or other rover.
+// (|bearing| >= 165 deg, i.e. a +/-15 deg cone directly behind the rover) is
+// farther than clear_dist (m).  Gates the LLM "back" action so the rover never
+// reverses into a wall, human or other rover.
 //
-// Used inside a ReactiveSequence in ai_nav.xml, so it is re-checked on every
+// Used inside a ReactiveSequence in social_nav.xml, so it is re-checked on every
 // tick WHILE the BackUp runs: if an obstacle appears behind mid-reverse the
 // sequence halts the backup immediately.
 //
@@ -56,7 +56,7 @@ public:
             }
             const double deg = (amin + static_cast<double>(i) * inc) *
                                180.0 / M_PI;
-            if (std::fabs(deg) >= 150.0) {   // rear sector (see rear_half_deg)
+            if (std::fabs(deg) >= 165.0) {   // rear sector: +/-15 deg behind
               min_r = std::min(min_r, static_cast<double>(r));
             }
           }

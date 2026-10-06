@@ -48,6 +48,13 @@ SPAWNS_BY_ROVERS = {
     1: [(0.0, 0.0)],
     2: [(-4.5, -4.5), (4.5, 4.5)],                    # SW + NE corners
     3: [(-4.5, -4.5), (4.5, -4.5), (-4.5, 4.5)],      # three corners
+    4: [(-4.5, -4.5), (4.5, -4.5), (-4.5, 4.5),       # all four corners
+        (4.5, 4.5)],
+    5: [(-4.5, -4.5), (4.5, -4.5), (-4.5, 4.5),       # four corners +
+        (4.5, 4.5), (0.0, 0.0)],                      # centre of the human zone
+    # NB the 5-rover centre spawn is DELIBERATE: maximum interaction density
+    # in the shared central zone.  Clearances: 3.5 m to both vertical human
+    # lanes (x = +/-3.5) and 3.0 m to the north shuttle lane (y = 3).
 }
 
 # ---------------------------------------------------------------------------
@@ -85,15 +92,17 @@ LANES_BY_HUMANS = {
 #   humans    : number of scripted actors; `lanes` = where they walk
 #   boxes / cylinders : static obstacles (placed only when > 0)
 #
-# Scenarios 1..9 are the full 3x3 matrix of {1,2,3} rovers x {1,2,3} humans
-# (row-major: 1r1h, 1r2h, 1r3h, 2r1h, 2r2h, 2r3h, 3r1h, 3r2h, 3r3h);
-# scenario 10 adds the obstacle variation (boxes + cylinders) on the
-# 3-rover / 3-human layout.  The numbers are short aliases only — the NAME
-# is the scenario identifier used in commands and folder names.
+# Scenarios 1..12 are the full 4x3 matrix of {2,3,4,5} rovers x {1,2,3}
+# humans (row-major: 2r1h, 2r2h, 2r3h, 3r1h, ..., 5r3h) — scaled up from the
+# original 1-3 rover matrix on 2026-09-17 (supervisor feedback: crowded
+# scenarios, up to 5 rovers); scenarios 13/14 add the obstacle variation
+# (boxes + cylinders) on the 3-rover and 5-rover layouts.  The numbers are
+# short aliases only — the NAME is the scenario identifier used in commands
+# and folder names.
 # ---------------------------------------------------------------------------
 SCENARIOS = {}
 _scenario_no = 0
-for _rovers in (1, 2, 3):
+for _rovers in (2, 3, 4, 5):
     for _humans in (1, 2, 3):
         _scenario_no += 1
         SCENARIOS[_scenario_no] = dict(
@@ -107,6 +116,24 @@ SCENARIOS[_scenario_no + 1] = dict(
     robots=3, humans=3, boxes=2, cylinders=2,
     spawns=SPAWNS_BY_ROVERS[3],
     lanes=LANES_BY_HUMANS[3],
+)
+SCENARIOS[_scenario_no + 2] = dict(
+    name='5_rovers_and_obstacles',
+    robots=5, humans=3, boxes=2, cylinders=2,
+    spawns=SPAWNS_BY_ROVERS[5],
+    lanes=LANES_BY_HUMANS[3],
+)
+# 2026-09-18: photo/showcase layout for presentation screenshots — a wedge:
+# middle rover slightly ahead facing +x; the side rovers a bit further back,
+# closer together (1.1 m from the axis), gazing at a forward point on the
+# middle rover's sightline (±15.5°).  NO humans, NO obstacles; launch
+# sim-only + GUI (no navigation/driving).
+SCENARIOS[_scenario_no + 3] = dict(
+    name='3_rovers_showcase',
+    robots=3, humans=0, boxes=0, cylinders=0,
+    spawns=[(-0.3, 1.1), (0.2, 0.0), (-0.3, -1.1)],
+    spawn_yaws=[-0.27, 0.0, 0.27],
+    lanes=[],
 )
 
 
@@ -140,14 +167,21 @@ def build_humans(spec):
 
 
 def build_robots(spec):
-    """Rover spawns from the SEEDS spec; every rover faces the arena centre
-    (odom/map frames are anchored at the spawn pose, so any yaw is valid and
-    a centre-facing yaw gives sensible initial odometry)."""
+    """Rover spawns from the SEEDS spec; by default every rover faces the
+    arena centre (odom/map frames are anchored at the spawn pose, so any yaw
+    is valid and a centre-facing yaw gives sensible initial odometry).
+
+    Optional spec['spawn_yaws'] (radians, one per spawn) overrides the
+    centre-facing yaw — used by the 3_rovers_showcase photo layout."""
     robots = []
+    yaws = spec.get('spawn_yaws')
     for i, (x, y) in enumerate(spec['spawns']):
-        # Corner spawns face the arena centre; a centre spawn faces +x
-        # (atan2(-0.0, -0.0) would otherwise give -pi).
-        yaw = 0.0 if (x == 0.0 and y == 0.0) else math.atan2(-y, -x)
+        if yaws is not None:
+            yaw = float(yaws[i])
+        else:
+            # Corner spawns face the arena centre; a centre spawn faces +x
+            # (atan2(-0.0, -0.0) would otherwise give -pi).
+            yaw = 0.0 if (x == 0.0 and y == 0.0) else math.atan2(-y, -x)
         robots.append([f'robot_{i}', round(x, 3), round(y, 3), round(yaw, 4)])
     return robots
 

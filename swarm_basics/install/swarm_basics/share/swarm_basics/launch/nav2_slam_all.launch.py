@@ -81,22 +81,23 @@ def write_costmap_params_file(ns, params):
     return path
 
 
-def create_slam_nodes(context, robots, bt='reactive'):
+def create_slam_nodes(context, robots, bt='reactive', connectors=True):
     pkg = get_package_share_directory('swarm_basics')
     slam_config = os.path.join(pkg, 'config', 'nav2', 'slam_toolbox.yaml')
     # Which behavior tree:
-    #   reactive -> social_nav.xml (pure reactive social reflexes)
-    #   ai       -> ai_nav.xml (BT + LLM decision layer)
-    #   no       -> NO social BT: Nav2's stock navigate_to_pose tree
+    #   reactive -> reactive_nav.xml (pure reactive social reflexes)
+    #   ai       -> social_nav.xml (BT + LLM decision layer)
+    #   stock    -> NO social BT: Nav2's stock navigate_to_pose tree
+    #               ('no' is accepted as a legacy alias)
     if bt == 'ai':
-        bt_xml = '/root/ros2_ws/src/swarm_basics/config/bt/ai_nav.xml'
-    elif bt == 'no':
+        bt_xml = '/root/ros2_ws/src/swarm_basics/config/bt/social_nav.xml'
+    elif bt in ('no', 'stock'):
         bt_xml = os.path.join(
             get_package_share_directory('nav2_bt_navigator'),
             'behavior_trees',
             'navigate_to_pose_w_replanning_and_recovery.xml')
     else:  # reactive
-        bt_xml = '/root/ros2_ws/src/swarm_basics/config/bt/social_nav.xml'
+        bt_xml = '/root/ros2_ws/src/swarm_basics/config/bt/reactive_nav.xml'
 
     nodes = []
 
@@ -111,8 +112,9 @@ def create_slam_nodes(context, robots, bt='reactive'):
         scan_topic = f'/{ns}/lidar/scan_clean'
         # Controller output topic:
         #   reactive/ai -> velocity_adaptor -> robot driver (social speed slowing)
-        #   no (pure)   -> robot driver directly (NO human/robot safety slow-down)
-        cmd_vel_topic = f'/{ns}/cmd_vel' if bt == 'no' else f'/{ns}/cmd_vel_social'
+        #   stock (pure)-> robot driver directly (NO human/robot safety slow-down)
+        cmd_vel_topic = (
+            f'/{ns}/cmd_vel' if bt in ('no', 'stock') else f'/{ns}/cmd_vel_social')
         odom_topic = f'/{ns}/odom'
         laser_frame = f'{ns}/lidar_link'
 
@@ -174,17 +176,36 @@ def create_slam_nodes(context, robots, bt='reactive'):
         # resolve their initial transform and Nav2 activates cleanly. bond_timeout
         # > 4s default so a slow-configured node doesn't cause the manager to give
         # up mid-bring-up (which left a robot's bt_navigator inactive before).
-        # The start is also STAGGERED per robot (12 s + 8 s per index): with 4
+        # The start is also STAGGERED per robot (20 s + 12 s per index): with 4
         # rovers, four simultaneous bring-ups starved the service calls and
         # robot_3's bt_navigator activation aborted with async_send_request
         # failed — serializing the bring-ups makes every robot activate.
+        # Widened for 5 rovers on 2026-09-23: at 12 s + 8 s/robot the last two
+        # activations (36 s, 44 s) still overlapped the five human detectors
+        # (45-61 s), and robot_1 aborted its bringup at 70 s with every robot
+        # still waiting.  Now 20/32/44/56/68 s, each activation gets a clear
+        # window; the detectors are pushed past the whole window by
+        # --detector-delay (SWARM_DETECTOR_DELAY_S).
         nodes.append(TimerAction(
-            period=12.0 + 8.0 * i,
+            period=20.0 + 12.0 * i,
             actions=[Node(
                 package='nav2_lifecycle_manager', executable='lifecycle_manager',
                 name='lifecycle_manager', namespace=ns,
                 parameters=[{'use_sim_time': False, 'autostart': True,
-                             'bond_timeout': 20.0,
+                             # 2026-09-23: 20 s was still too tight for the LAST
+                             # rovers of a 5-rover boot — their activation overlaps
+                             # the busiest DDS/TF window, the bond to a
+                             # slow-answering server expired, and the manager
+                             # aborted the bring-up.  That is the recurring "one
+                             # laggard robot" no surgical restart could clear.
+                             'bond_timeout': 60.0,
+                             # 2026-09-18: raise change_state call timeout from the
+                             # 1 s default — under 5-robot load a slow service
+                             # answer aborted the whole bringup ('Failed to
+                             # change state for node ... Aborting bringup').
+                             # 2026-09-23: 5 s still aborted the laggard; 15 s
+                             # covers a costmap-initialisation stall at ~88 C.
+                             'service_timeout': 15.0,
                              'attempt_respawn_reconnection': True,
                              'node_names': ['planner_server', 'controller_server',
                                             'behavior_server', 'bt_navigator']}],
@@ -192,41 +213,89 @@ def create_slam_nodes(context, robots, bt='reactive'):
             )],
         ))
 
-    # Viz-only connector: align every robot's map frame to robot_0/map so RViz can
-    # display all rovers in one view. Does NOT affect navigation — each robot still
-    # plans in its own {ns}/map frame.
+    # Viz-only connectors: align every robot's map frame to robot_0/map so RViz
+    # can display all rovers in one view. They do NOT affect navigation — each
+    # robot still plans in its own {ns}/map frame.
+    # Subset relaunches (surgical recovery, and the sequential bring-up in
+    # start_experiment.sh) SKIP these: the connectors from the original launch are
+    # still running, and a second publisher on the same frames would emit
+    # duplicate static transforms.  only_connectors:=true creates them alone.
+    if connectors:
+        nodes.extend(viz_connector_nodes(robots))
+
+    return nodes
+
+
+def viz_connector_nodes(robots):
+    """The viz-only static TFs (robot_0/map -> {ns}/map) for the given robots."""
+    nodes = []
     origin = None
     for r in robots:
         if r[0] == 'robot_0':
             origin = (r[1], r[2], r[3])
-    if origin:
-        x0, y0, yaw0 = origin
-        for r in robots:
-            if r[0] == 'robot_0':
-                continue
-            ns, x, y, yaw = r
-            nodes.append(Node(
-                package='tf2_ros', executable='static_transform_publisher',
-                name=f'{ns}_map_connector',
-                arguments=[str(x - x0), str(y - y0), '0.0',
-                           str(yaw - yaw0), '0.0', '0.0',
-                           'robot_0/map', f'{ns}/map'],
-                output='screen',
-            ))
-
+    if not origin:
+        return nodes
+    x0, y0, yaw0 = origin
+    for ns, x, y, yaw in robots:
+        if ns == 'robot_0':
+            continue
+        nodes.append(Node(
+            package='tf2_ros', executable='static_transform_publisher',
+            name=f'{ns}_map_connector',
+            arguments=[str(x - x0), str(y - y0), '0.0',
+                       str(yaw - yaw0), '0.0', '0.0',
+                       'robot_0/map', f'{ns}/map'],
+            output='screen',
+        ))
     return nodes
 
 
 def generate_launch_description():
     bt_arg = DeclareLaunchArgument(
         'bt', default_value='reactive',
-        description='Behavior tree: reactive (social_nav.xml), '
-                    'ai (ai_nav.xml, BT+LLM) or no '
-                    '(stock Nav2 navigate_to_pose, no social layer)')
+        description='Behavior tree: reactive (reactive_nav.xml), '
+                    'ai (social_nav.xml, BT+LLM) or stock '
+                    '(stock Nav2 navigate_to_pose, no social layer; '
+                    '"no" is a legacy alias)')
+    # Recovery support (2026-09-17): optional comma-separated robot filter so
+    # start_experiment.sh can relaunch ONLY the failed robots' stacks on a
+    # surgical restart (e.g. robots:=robot_2 or robots:=robot_2,robot_3).
+    # Default '' = every robot (normal boots unchanged).
+    robots_arg = DeclareLaunchArgument(
+        'robots', default_value='',
+        description="comma-separated robot filter, e.g. 'robot_2' or "
+                    "'robot_2,robot_3' (default: all)")
+    # Sequential bring-up support (2026-09-23): per-robot launches skip the viz
+    # connectors (they would duplicate TFs), so they are created once by a final
+    # only_connectors:=true launch — no-op if nothing else publishes them.
+    only_connectors_arg = DeclareLaunchArgument(
+        'only_connectors', default_value='false',
+        description='create ONLY the viz map-connector static TFs')
     bt = LaunchConfiguration('bt')
-    robot_list = [(ns, x, y, yaw) for ns, x, y, yaw in ROBOT_POSITIONS]
+    robots_cfg = LaunchConfiguration('robots')
+    only_connectors_cfg = LaunchConfiguration('only_connectors')
+    all_robots = [(ns, x, y, yaw) for ns, x, y, yaw in ROBOT_POSITIONS]
+
+    def _create(ctx):
+        bt_value = ctx.perform_substitution(bt)
+        if ctx.perform_substitution(only_connectors_cfg).lower() in ('true', '1'):
+            return viz_connector_nodes(all_robots)
+        selection = ctx.perform_substitution(robots_cfg).strip()
+        if not selection:
+            return create_slam_nodes(ctx, all_robots, bt_value)
+        wanted = [part.strip() for part in selection.split(',') if part.strip()]
+        known = {r[0] for r in all_robots}
+        unknown = sorted({ns for ns in wanted if ns not in known})
+        if unknown:
+            raise RuntimeError(
+                f"robots:= filter lists unknown robot(s) {unknown} "
+                f"(valid: {sorted(known)})")
+        robots = [r for r in all_robots if r[0] in set(wanted)]
+        return create_slam_nodes(ctx, robots, bt_value, connectors=False)
+
     return LaunchDescription([
         bt_arg,
-        OpaqueFunction(function=lambda ctx: create_slam_nodes(
-            ctx, robot_list, ctx.perform_substitution(bt))),
+        robots_arg,
+        only_connectors_arg,
+        OpaqueFunction(function=_create),
     ])

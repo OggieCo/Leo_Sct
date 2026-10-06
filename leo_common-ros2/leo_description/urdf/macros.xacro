@@ -8,7 +8,11 @@
                        link_prefix:=''
                        joint_prefix:=''
                        imu_translation:='0.0628 -0.0314 -0.0393'
-                       mecanum_wheels:=false">
+                       mecanum_wheels:=false
+                       lidar_rate:=10
+                       camera_rate:=5
+                       camera_width:=640
+                       camera_height:=480">
 
     <xacro:macro name="rocker_link" params="name">
       <link name="${link_prefix}rocker_${name}_link">
@@ -487,7 +491,7 @@
     <gazebo reference="${link_prefix}lidar_link">
       <sensor name="lidar" type="gpu_lidar">
         <always_on>1</always_on>
-        <update_rate>10</update_rate>
+        <update_rate>${lidar_rate}</update_rate>
         <lidar>
           <scan>
             <horizontal>
@@ -512,15 +516,19 @@
     <gazebo reference="${link_prefix}realsense_link">
       <sensor name="depth_camera" type="rgbd_camera">
       <always_on>1</always_on>
-        <update_rate>5</update_rate>
+        <update_rate>${camera_rate}</update_rate>
         <camera name="depth_camera">
           <horizontal_fov>1.51844</horizontal_fov> <!--87 degrees-->
           <lens>
+            <!-- Intrinsics must follow the configured resolution (the plugin
+                 derives its real projection from horizontal_fov, but these
+                 were the 640x480 values and would otherwise lie about the
+                 principal point / focal length). -->
             <intrinsics>
-              <fx>554.25469</fx>
-              <fy>554.25469</fy>
-              <cx>320.5</cx>
-              <cy>240.5</cy>
+              <fx>${554.25469 * camera_width / 640.0}</fx>
+              <fy>${554.25469 * camera_height / 480.0}</fy>
+              <cx>${camera_width / 2.0 + 0.5}</cx>
+              <cy>${camera_height / 2.0 + 0.5}</cy>
               <s>0</s>
             </intrinsics>
           </lens>
@@ -533,9 +541,13 @@
             <center>0.5 0.5</center>
           </distortion>
           <image>
-            <!-- Old values were 64 for width and 48 for height -->
-            <width>640</width>
-            <height>480</height>
+            <!-- Resolution is a first-class cost knob with several rovers:
+                 RGB+depth rendering, bridge transport and detector
+                 pre-processing all scale with the pixel count (halving BOTH
+                 width and height = 1/4 the pixels).  Defaults are the
+                 original 640x480. -->
+            <width>${camera_width}</width>
+            <height>${camera_height}</height>
             <format>R8G8B8</format>
           </image>
           <clip>
@@ -607,7 +619,11 @@
                params="default_antenna:=true 
                        fixed:=true
                        robot_ns:=''
-                       mecanum_wheels:=false">
+                       mecanum_wheels:=false
+                       lidar_rate:=10
+                       camera_rate:=5
+                       camera_width:=640
+                       camera_height:=480">
 
     <xacro:property name="link_prefix" value=""/>
     <xacro:if value="${robot_ns != '' and robot_ns != '/'}">
@@ -617,7 +633,11 @@
     <xacro:leo default_antenna="${default_antenna}"
                rockers_fixed="false"
                link_prefix="${link_prefix}"
-               mecanum_wheels="${mecanum_wheels}"/>
+               mecanum_wheels="${mecanum_wheels}"
+               lidar_rate="${lidar_rate}"
+               camera_rate="${camera_rate}"
+               camera_width="${camera_width}"
+               camera_height="${camera_height}"/>
 
     <xacro:leo_gazebo robot_ns="${robot_ns}"/>
 

@@ -1,0 +1,17 @@
+digraph LLMFLOW {
+  rankdir=LR;
+  graph [fontname="DejaVu Sans", fontsize=15, nodesep=0.4, ranksep=0.9, pad=0.3, bgcolor="white", label="The decision loop — how the LLM acts", labelloc=t, fontcolor="#5D1715"];
+  node [shape=box, style="rounded,filled", fillcolor="#F4F4F4", color="#5D1715", fontcolor="#1A1A1A", fontname="DejaVu Sans", fontsize=12.5, penwidth=1.2, margin="0.15,0.08"];
+  edge [color="#666666", fontname="DejaVu Sans", fontsize=10.5, arrowsize=0.7, penwidth=1.0];
+  PERC [label=<<B>perception</B><BR/><I>human + robot proximity</I>>, fillcolor="#E8E8E8"];
+  PLAN [label=<<B>llm_planner</B><BR/><I>gpt-4o-mini · event-driven</I>>, fillcolor="#5D1715", fontcolor="white"];
+  OUT [label=<<B>decision</B><BR/><I>action · speed scale · reason</I><BR/><I>proceed · slow · yield · arc L/R · stop · back</I>>, fillcolor="white"];
+  CLA [label=<<B>CheckLlmAction</B><BR/><I>reads decision into the tree · every tick</I>>, fillcolor="#5D1715", fontcolor="white"];
+  TREE [label=<<B>ai_nav.xml branches</B><BR/><I>executes the action</I>>];
+  VA [label=<<B>velocity_adaptor</B><BR/><I>applies the speed scale</I>>, fillcolor="#5D1715", fontcolor="white"];
+  PERC -> PLAN [label="situation string\n(only when it changes · 2.5 s cooldown)"];
+  PLAN -> OUT [label="topics: llm_action\nllm_reason · llm_speed_scale"];
+  OUT -> CLA [label="blackboard"];
+  CLA -> TREE [label="activates the matching branch"];
+  OUT -> VA [style=dashed, label="speed scale for slow"];
+}

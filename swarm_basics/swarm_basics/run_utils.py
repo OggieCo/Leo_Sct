@@ -5,10 +5,16 @@ All nodes must write into the SAME per-run folder, inside a MODE subfolder:
   coverage_logs/BT_LLM/run_<timestamp>/  (LLM decision layer enabled)
   coverage_logs/BT/run_<timestamp>/      (pure reactive BT, no LLM)
   coverage_logs/Nav2/run_<timestamp>/    (stock Nav2, no social layer)
-  ...and under a scenario-name level when running a seed scenario:
-  coverage_logs/<MODE>/<name>/run_<timestamp>/   (e.g. 2_rovers_2_humans)
+  ...and with the batch tag in the NAME when running a scenario:
+  coverage_logs/<MODE>/<name>/<batch>_run_<timestamp>/
+  with <name> e.g. 2_rovers_3_humans and <batch> = batch_1, batch_2, ...
+  (one data-collection campaign per batch: strategy / seed / batch_X).
+  The batch comes from SWARM_BATCH (run_matrix.sh exports it per pass);
+  manual runs without it JOIN the newest existing batch of that scenario.
+  SWARM_RUN_DIR overrides everything for ad-hoc / GUI runs: the run folder
+  is created directly inside that directory (plain run_<timestamp> name).
 The mode comes from the SWARM_RUN_MODE env var set by the launch (the
-enable_llm arg, overridden to Nav2 by bt:=no), so the three conditions are
+enable_llm arg, overridden to Nav2 by bt:=stock), so the three conditions are
 separated for the thesis comparison.
 
 start_experiment.sh exports SWARM_RUN_ID (its launch timestamp) before
@@ -73,6 +79,33 @@ def _active_run_id():
     return ''.join(c if (c.isalnum() or c in '-_') else '_' for c in rid)
 
 
+def _batch_name(root):
+    """Batch tag for NEW run folder names under `root` (= MODE/scenario dir).
+
+    SWARM_BATCH (exported per pass by run_matrix.sh, e.g. 'batch_2') pins
+    the data-collection campaign; the tag becomes part of every run-folder
+    NAME — batch_2_run_2026-09-14_10-07-30 — instead of an extra folder
+    level (the scenario folder already separates seeds).  Without SWARM_BATCH
+    a manual run JOINS the newest existing batch, or starts with batch_1."""
+    name = os.environ.get('SWARM_BATCH', '').strip()
+    if name:
+        return ''.join(c if (c.isalnum() or c in '-_') else '_' for c in name)
+    newest = None
+    try:
+        for d in root.iterdir():
+            if not (d.is_dir() and d.name.startswith('batch_')):
+                continue
+            try:
+                n = int(d.name.split('_', 1)[1].split('_', 1)[0])
+            except (IndexError, ValueError):
+                continue
+            if newest is None or n > newest:
+                newest = n
+    except OSError:
+        pass
+    return f'batch_{newest}' if newest is not None else 'batch_1'
+
+
 def _touched_recently(d, now):
     """True if any file inside `d` was written less than _ACTIVE_SECONDS ago
     (a live run keeps writing CSVs at 1 Hz; a finished one stops)."""
@@ -87,7 +120,16 @@ def _touched_recently(d, now):
 
 def get_run_dir():
     """Return the shared Path for the current run (creates it if needed)."""
-    root = _scenario_root(BASE_DIR / _mode())
+    override = os.environ.get('SWARM_RUN_DIR', '').strip()
+    if override:
+        # Ad-hoc / GUI runs ("random runs"): everything lands directly in
+        # that folder with plain run_<timestamp> names, no MODE/scenario/
+        # batch structure.
+        root = Path(override)
+        prefix = ''
+    else:
+        root = _scenario_root(BASE_DIR / _mode())
+        prefix = _batch_name(root) + '_'
     root.mkdir(parents=True, exist_ok=True)
 
     rid = _active_run_id()
@@ -95,25 +137,29 @@ def get_run_dir():
         # Deterministic: start_experiment.sh exported the run id before
         # launching anything, so every node — however late it starts (the
         # goal drivers wait for the Nav2 readiness gate) — resolves to the
-        # same run_<id> folder, goal_stats.csv included.
+        # same <prefix>run_<id> folder, goal_stats.csv included.
         # JOIN the folder whichever mode root already has it (the sim/Nav2
         # launch creates it with the authoritative mode); only create it
         # ourselves if nobody did yet.  This keeps a run in ONE folder even
         # when a node's SWARM_RUN_MODE is missing — the goal drivers used to
         # default to BT_LLM and misfile goal_stats.csv into
         # BT_LLM/<scenario>/ (observed: BT run 2026-09-13_17-13-39).
-        for mode in _MODES:
-            d = _scenario_root(BASE_DIR / mode) / f'run_{rid}'
-            if d.is_dir():
-                return d
-        d = root / f'run_{rid}'
+        if not override:
+            for mode in _MODES:
+                mode_root = _scenario_root(BASE_DIR / mode)
+                found = sorted(p for p in mode_root.glob(f'*run_{rid}')
+                               if p.is_dir())
+                if found:
+                    return found[0]
+        d = root / f'{prefix}run_{rid}'
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    # manual launch (no SWARM_RUN_ID): join the newest live run folder
     newest = None
     newest_mtime = -1.0
     for d in root.iterdir():
-        if d.is_dir() and d.name.startswith('run_'):
+        if d.is_dir() and 'run_' in d.name:
             try:
                 m = d.stat().st_mtime
             except OSError:
@@ -127,6 +173,6 @@ def get_run_dir():
                                or _touched_recently(newest, now)):
         return newest
 
-    d = root / time.strftime('run_%Y-%m-%d_%H-%M-%S')
+    d = root / f'{prefix}run_{time.strftime("%Y-%m-%d_%H-%M-%S")}'
     d.mkdir(parents=True, exist_ok=True)
     return d

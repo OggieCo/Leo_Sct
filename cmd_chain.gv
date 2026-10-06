@@ -1,0 +1,27 @@
+digraph CMD {
+  rankdir=LR;
+  graph [fontname="DejaVu Sans", fontsize=14, nodesep=0.3, ranksep=0.75, pad=0.25, bgcolor="white", label="Command chain: goal → wheels", labelloc=t, fontcolor="#5D1715"];
+  node [shape=box, style="rounded,filled", fillcolor="#F4F4F4", color="#5D1715", fontcolor="#1A1A1A", fontname="DejaVu Sans", fontsize=12.5, penwidth=1.2, margin="0.15,0.08", height=0.4];
+  edge [color="#666666", fontname="DejaVu Sans", fontsize=10, arrowsize=0.7, penwidth=1.0];
+
+  GS [label="goal scripts (ours)", fillcolor="#5D1715", fontcolor="white"];
+  BT [label="bt_navigator"];
+  P  [label="planner_server"];
+  C  [label="controller_server"];
+  B  [label="behavior_server"];
+  VA [label="velocity_adaptor (ours)", fillcolor="#5D1715", fontcolor="white"];
+  BR [label="ros_gz_bridge", fillcolor="#E8E8E8"];
+  DD [label="diff-drive plugin", fillcolor="#E8E8E8"];
+  M  [label="wheels / motion", fillcolor="white"];
+
+  GS -> BT [label="NavigateToPose"];
+  BT -> P  [label="ComputePathToPose · 1 Hz"];
+  P -> BT  [style=dashed, label="path"];
+  BT -> C  [label="FollowPath · 20 Hz"];
+  BT -> B  [style=dashed, label="recovery"];
+  C -> VA [label="cmd_vel_social"];
+  C -> BR [style=dashed, label="cmd_vel (baseline)"];
+  VA -> BR [label="cmd_vel"];
+  BR -> DD;
+  DD -> M;
+}
