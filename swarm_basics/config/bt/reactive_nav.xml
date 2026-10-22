@@ -1,7 +1,7 @@
 <!--
   reactive_nav.xml - Socially-aware navigation Behavior Tree (reactive arm).
 
-  STRUCTURE (2026-08-06):
+  STRUCTURE:
     - PipelineSequence (Nav2 standard) for correct 1 Hz replanning.  A root
       SequenceStar was tried but it floods ComputePathToPose (RateController
       gating resets every re-tick) -> planner timeouts -> recovery chaos.
@@ -15,14 +15,6 @@
     * YIELD   - {human_close} true -> stop & wait (Wait 1 s, looped).
     * RESUME  - human gone -> FollowPath immediately.
     * TIMEOUT - human still there after 4 s -> continue toward the goal.
-
-  ROBOT-ROBOT LAYER (2026-08-17):
-    * IsRobotClose mirrors IsHumanClose but uses the proximity layer
-      (/ns/robot_close, /ns/robot_angle) and a wider 30 deg cone.
-    * NESTED fallbacks: each ReactiveFallback keeps at most TWO children
-      (one async yield + one async FollowPath).  A single fallback with
-      THREE async children stops re-ticking the yield branches while
-      FollowPath is active (observed in test run_2026-08-17_15-17-58).
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">

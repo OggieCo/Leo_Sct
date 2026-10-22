@@ -1,0 +1,47 @@
+[15:41:37] Safety: nofile=65536 dds=UDPv4 clock=50Hz lidar=10Hz camera=5Hz yolo_gate=1
+[15:41:37] CPU cap: 4.6 GHz (thermal-safe; see scripts/host_cpu_cap.sh)
+[15:41:37] 4+ robots: extending Nav2 readiness timeout to 300s
+[15:41:37] 4+ robots: extending stall detection to 180s 
+[15:41:37] (Nav2 bring-up is staggered 20 s + 12 s per robot)
+[15:41:39] Mode: bt=ai  llm=true  detector=yolo  headless=true  goals=fixed  dynamic_plots=false  raw_contacts=false  scenario=7
+[15:41:39] Starting Gazebo + robots: ros2 launch swarm_basics leo_gz.launch.py headless:=true detector:=yolo enable_llm:=true bt:=ai dynamic_plots:=false log_raw_contacts:=false sim_world:=/root/ros2_ws/src/swarm_basics/scripts/../worlds/scenarios/4_rovers_1_humans/scenario.sdf
+[15:41:39] Bring-up: SEQUENTIAL — 4 stacks one at a time (90s window, up to 3 attempts each)
+[15:41:39] Waiting for robot_0 to activate (attempt 1/3, window 90s, guarded)...
+robot_0: scan flowing
+robot_0: bt_navigator active
+robot_0: ACTIVE + map OK
+READY
+[15:42:04] robot_0: ready
+[15:42:04] Waiting for robot_1 to activate (attempt 1/3, window 90s, guarded)...
+robot_1: scan flowing
+robot_1: bt_navigator active
+robot_1: ACTIVE + map OK
+READY
+[15:42:30] robot_1: ready
+[15:42:30] Waiting for robot_2 to activate (attempt 1/3, window 90s, guarded)...
+robot_2: scan flowing
+robot_2: bt_navigator active
+robot_2: ACTIVE + map OK
+READY
+[15:42:56] robot_2: ready
+[15:42:56] Waiting for robot_3 to activate (attempt 1/3, window 90s, guarded)...
+robot_3: scan flowing
+ABORTED — lifecycle bringup aborted for: robot_3 (still waiting: ['robot_3(nav2)'])
+[15:43:29] RECOVERY: robot_3 did not activate — killing its stack and retrying
+[15:43:35]   settling 10s before the next attempt
+[15:43:45] Waiting for robot_3 to activate (attempt 2/3, window 90s, guarded)...
+robot_3: scan flowing
+robot_3: get_state response lost - retrying
+ABORTED — lifecycle bringup aborted for: robot_3 (still waiting: ['robot_3(nav2)'])
+[15:44:18] RECOVERY: robot_3 did not activate — killing its stack and retrying
+[15:44:24]   settling 10s before the next attempt
+[15:44:34] Waiting for robot_3 to activate (attempt 3/3, window 90s, guarded)...
+robot_3: scan flowing
+ABORTED — lifecycle bringup aborted for: robot_3 (still waiting: ['robot_3(nav2)'])
+[15:45:06] RECOVERY: robot_3 did not activate — killing its stack and retrying
+[15:45:12]   settling 10s before the next attempt
+[15:45:22] ERROR: robot_3 never became ready after 3 attempts — aborting this boot
+[15:45:22] ERROR: bring-up failed — Nav2 not active for: robot_0 robot_1 robot_2 robot_3
+[15:45:22] Aborting this run NOW (fail fast). Diagnostics: /root/ros2_ws/src/swarm_basics/scripts/startup_logs/2026-10-10_15-41-37/nav2.log
+[15:45:22] Shutting down (signalling every launch process group)...
+[15:45:24] Stopped. Logs: /root/ros2_ws/src/swarm_basics/scripts/startup_logs/2026-10-10_15-41-37

@@ -176,15 +176,16 @@ def generate_launch_description():
             yaw = robot["yaw"]
 
             # URDF with per-robot namespace mapping.  Sensor rates come from the
-            # environment so a run can trade fidelity for real-time factor
-            # (SWARM_LIDAR_HZ / SWARM_CAMERA_HZ; defaults keep 10 Hz / 5 Hz).
+            # environment so a run can override them; the defaults match the
+            # frozen data-collection configuration (5 Hz LiDAR / 3 Hz camera at
+            # 320x240, SWARM_LIDAR_HZ / SWARM_CAMERA_HZ / SWARM_CAMERA_W/H).
             xacro_file = os.path.join(leo_description, 'urdf', 'leo_sim.urdf.xacro')
             doc = xacro.process_file(xacro_file, mappings={
                 "robot_ns": ns,
-                "lidar_rate": os.environ.get("SWARM_LIDAR_HZ", "10"),
-                "camera_rate": os.environ.get("SWARM_CAMERA_HZ", "5"),
-                "camera_width": os.environ.get("SWARM_CAMERA_W", "640"),
-                "camera_height": os.environ.get("SWARM_CAMERA_H", "480"),
+                "lidar_rate": os.environ.get("SWARM_LIDAR_HZ", "5"),
+                "camera_rate": os.environ.get("SWARM_CAMERA_HZ", "3"),
+                "camera_width": os.environ.get("SWARM_CAMERA_W", "320"),
+                "camera_height": os.environ.get("SWARM_CAMERA_H", "240"),
             })
             robot_description = doc.toxml()
 
@@ -223,19 +224,6 @@ def generate_launch_description():
                 ],
                 output="screen"
             )
-
-            # Controller node (per robot)
-            #behavior_node = Node(
-            #    package="swarm_basics",
-            #    executable="robot_supervisor_3_movements",
-            #    name="robot_supervisor",
-            #    namespace=ns,
-            #    parameters=[
-            #        {"spawn_x": x},
-            #        {"spawn_y": y}
-            #    ],
-            #    output="screen"
-            #)
 
             # Image processor — depth camera → zone detection (CLEAR/LEFT/RIGHT/CORNER)
             # NOTE: superseded by image_human_processor (real human detection);
@@ -386,8 +374,8 @@ def generate_launch_description():
             ))
 
             # Human detector, DELAYED by SWARM_DETECTOR_DELAY_S seconds
-            # (run_parallel.py --detector-delay, default 45 s; 0 = old
-            # behaviour).  It costs a torch/YOLO model load, a CUDA context and
+            # (default 45 s; 0 = old behaviour).  It costs a torch/YOLO model
+            # load, a CUDA context and
             # one more DDS participant per robot, and consumes nothing until
             # goals start — so keeping it OUT of the bring-up window matters:
             # with 5 rovers that window already carries ~45 DDS participants,

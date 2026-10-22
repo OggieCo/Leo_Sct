@@ -1,0 +1,58 @@
+[12:01:53] Safety: nofile=65536 dds=UDPv4 clock=50Hz lidar=10Hz camera=5Hz yolo_gate=1
+[12:01:53] CPU cap: 4.6 GHz (thermal-safe; see scripts/host_cpu_cap.sh)
+[12:01:53] 4+ robots: extending Nav2 readiness timeout to 300s
+[12:01:53] 5 robots: extending Nav2 readiness timeout to 420s 
+[12:01:53] (last Nav2 stack starts at 68 s; leaves room for one surgical recovery)
+[12:01:53] 4+ robots: extending stall detection to 180s 
+[12:01:53] (Nav2 bring-up is staggered 20 s + 12 s per robot)
+[12:01:56] Mode: bt=ai  llm=true  detector=yolo  headless=true  goals=fixed  dynamic_plots=false  raw_contacts=false  scenario=14
+[12:01:56] Starting Gazebo + robots: ros2 launch swarm_basics leo_gz.launch.py headless:=true detector:=yolo enable_llm:=true bt:=ai dynamic_plots:=false log_raw_contacts:=false sim_world:=/root/ros2_ws/src/swarm_basics/scripts/../worlds/scenarios/5_rovers_and_obstacles/scenario.sdf
+[12:01:56] Bring-up: SEQUENTIAL — 5 stacks one at a time (90s window, up to 3 attempts each)
+[12:01:56] Waiting for robot_0 to activate (attempt 1/3, window 90s, guarded)...
+robot_0: scan flowing
+robot_0: bt_navigator active
+robot_0: ACTIVE + map OK
+READY
+[12:02:21] robot_0: ready
+[12:02:21] Waiting for robot_1 to activate (attempt 1/3, window 90s, guarded)...
+robot_1: scan flowing
+robot_1: bt_navigator active
+robot_1: ACTIVE + map OK
+READY
+[12:02:47] robot_1: ready
+[12:02:47] Waiting for robot_2 to activate (attempt 1/3, window 90s, guarded)...
+robot_2: scan flowing
+robot_2: bt_navigator active
+robot_2: ACTIVE + map OK
+READY
+[12:03:14] robot_2: ready
+[12:03:14] Waiting for robot_3 to activate (attempt 1/3, window 90s, guarded)...
+robot_3: scan flowing
+robot_3: bt_navigator active
+robot_3: ACTIVE + map OK
+READY
+[12:03:42] robot_3: ready
+[12:03:42] Waiting for robot_4 to activate (attempt 1/3, window 90s, guarded)...
+robot_4: scan flowing
+robot_4: get_state response lost - retrying
+ABORTED — lifecycle bringup aborted for: robot_4 (still waiting: ['robot_4(nav2)'])
+[12:04:18] RECOVERY: robot_4 did not activate — killing its stack and retrying
+[12:04:24]   settling 10s before the next attempt
+[12:04:34] Waiting for robot_4 to activate (attempt 2/3, window 90s, guarded)...
+robot_4: scan flowing
+robot_4: get_state response lost - retrying
+ABORTED — lifecycle bringup aborted for: robot_4 (still waiting: ['robot_4(nav2)'])
+[12:05:11] RECOVERY: robot_4 did not activate — killing its stack and retrying
+[12:05:18]   settling 10s before the next attempt
+[12:05:28] Waiting for robot_4 to activate (attempt 3/3, window 90s, guarded)...
+robot_4: scan flowing
+ABORTED — lifecycle bringup aborted for: robot_4 (still waiting: ['robot_4(nav2)'])
+[12:06:01] RECOVERY: robot_4 did not activate — killing its stack and retrying
+[12:06:08]   settling 10s before the next attempt
+[12:06:18] ERROR: robot_4 never became ready after 3 attempts — aborting this boot
+[12:06:18] ERROR: bring-up failed — Nav2 not active for: robot_0 robot_1 robot_2 robot_3 robot_4
+[12:06:18] Aborting this run NOW (fail fast). Diagnostics: /root/ros2_ws/src/swarm_basics/scripts/startup_logs/2026-10-08_12-01-53/nav2.log
+[12:06:18] Shutting down (signalling every launch process group)...
+[12:06:28] Graceful shutdown timed out — sending SIGTERM...
+[12:06:33] WARNING: processes still alive — sending SIGKILL.
+[12:06:34] Stopped. Logs: /root/ros2_ws/src/swarm_basics/scripts/startup_logs/2026-10-08_12-01-53

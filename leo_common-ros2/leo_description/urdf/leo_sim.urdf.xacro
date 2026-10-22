@@ -8,14 +8,15 @@
   <!-- Sensor rates: the dominant Gazebo cost with several rovers.  LiDAR
        ray-casts and RGB-D rendering scale linearly with these, and the
        image/depth streams also cross the ROS bridge (bandwidth + CPU).
-       Defaults are the original 10 Hz / 5 Hz. -->
-  <xacro:arg name="lidar_rate" default="10"/>
-  <xacro:arg name="camera_rate" default="5"/>
+       Defaults are the frozen data-collection configuration: 5 Hz / 3 Hz
+       (the original 10 Hz / 5 Hz are available via the xacro args). -->
+  <xacro:arg name="lidar_rate" default="5"/>
+  <xacro:arg name="camera_rate" default="3"/>
   <!-- RGB-D resolution: rendering, bridge transport and detector
-       pre-processing all scale with the pixel count.  640x480 is the
-       original; 320x240 is a 4x saving. -->
-  <xacro:arg name="camera_width" default="640"/>
-  <xacro:arg name="camera_height" default="480"/>
+       pre-processing all scale with the pixel count.  320x240 matches the
+       configuration used for all reported runs; 640x480 is the original. -->
+  <xacro:arg name="camera_width" default="320"/>
+  <xacro:arg name="camera_height" default="240"/>
 
   <xacro:include filename="$(find leo_description)/urdf/macros.xacro"/>
 

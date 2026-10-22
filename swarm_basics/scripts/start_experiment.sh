@@ -55,6 +55,20 @@ umask 000
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# --------------------------- duplicate-launch guard --------------------------
+# Two start_experiment.sh instances on the same scenario fight over the same
+# Gazebo/DDS resources (observed 2026-10-10: control loops missed their rates,
+# action servers timed out, goals aborted).  An exclusive flock makes a second
+# instance fail fast instead of corrupting the running one.
+# (Do NOT replace this with a pgrep-based check — a pgrep guard was tried first
+# and false-positived on its own command-substitution subshell, which inherits
+# the script's cmdline.)
+exec 9>/tmp/start_experiment.lock
+if ! flock -n 9; then
+    printf 'ERROR: another start_experiment.sh is already running — aborting.\n' >&2
+    exit 1
+fi
+
 # ------------------------------- defaults -----------------------------------
 BT=""
 LLM=""
@@ -118,10 +132,10 @@ groups_alive() {
 }
 
 # ------------------- runtime safety defaults (2026-09-23) -------------------
-# These four settings used to be injected ONLY by scripts/run_parallel.py, so a
-# run started any other way (run_matrix.sh, ./start_experiment.sh by hand) silently
-# missed them and walked into the failure modes they prevent.  They now live here;
-# the harness can still override each one, but no entry point can forget them.
+# These four settings live here so that EVERY entry point (run_matrix.sh or a
+# manual ./start_experiment.sh) applies them — skipping them walks straight
+# into the failure modes they prevent.  The environment can still override
+# each one.
 #
 #  1) FD LIMIT — the container's soft limit is 1024, while a 5-rover stack opens
 #     hundreds of DDS sockets and shared-memory segments.  Hitting EMFILE makes
@@ -144,8 +158,14 @@ ulimit -n 65536 2>/dev/null || true
 export FASTDDS_BUILTIN_TRANSPORTS="${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}"
 export SWARM_CLOCK_HZ="${SWARM_CLOCK_HZ:-50}"
 export YOLO_WAIT_GATE="${YOLO_WAIT_GATE:-1}"
+# SLAM map fraction a rover must have mapped before its far tour goals are
+# unlocked (fixed_goals.py reads this once at node start).  0.30 up to
+# 2026-10-14, then 0.20, now 0.10: under 5-rover load SLAM grows the map too
+# slowly to ever clear a 20% gate, so every rover was stuck on forward-scan
+# goals (run_2026-10-14_17-40-49 / _20-01-14).
+export SWARM_SCAN_THRESHOLD="${SWARM_SCAN_THRESHOLD:-0.10}"
 
-log "Safety: nofile=$(ulimit -n) dds=$FASTDDS_BUILTIN_TRANSPORTS clock=${SWARM_CLOCK_HZ}Hz lidar=${SWARM_LIDAR_HZ:-10}Hz camera=${SWARM_CAMERA_HZ:-5}Hz yolo_gate=$YOLO_WAIT_GATE"
+log "Safety: nofile=$(ulimit -n) dds=$FASTDDS_BUILTIN_TRANSPORTS clock=${SWARM_CLOCK_HZ}Hz lidar=${SWARM_LIDAR_HZ:-5}Hz camera=${SWARM_CAMERA_HZ:-3}Hz yolo_gate=$YOLO_WAIT_GATE scan_threshold=$SWARM_SCAN_THRESHOLD"
 # A thermally throttled host is the difference between a boot that passes and one
 # that silently loses a robot, so record the active cap in the run log.
 if [[ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq ]]; then
@@ -367,14 +387,9 @@ trap 'cleanup' EXIT
 if [[ -n "$IGN" ]] && $IGN service -l 2>/dev/null | grep -q "/world/${WORLD_NAME}/control"; then
     die "A Gazebo world '${WORLD_NAME}' is already running — stop it first."
 fi
-# Parallel-slot escape hatch (run_parallel.py --mode slots): every slot runs
-# in its OWN ROS_DOMAIN_ID + Ignition partition with its own results folder,
-# so another slot's processes are legitimate neighbours, not stale leftovers.
-# Solo runs keep the strict check below — for them a stale sim WOULD corrupt
-# the CSVs (shared topics, shared run folder).
-if [[ "${SWARM_ALLOW_PARALLEL:-0}" == "1" ]]; then
-    log "WARNING: SWARM_ALLOW_PARALLEL=1 — skipping the leftover-process check (isolated slot)."
-elif pgrep -f 'ros2 launch swarm_basics' >/dev/null 2>&1 \
+# A stale sim would corrupt the run's CSVs (shared topics, shared run folder),
+# so refuse to start while leftover swarm_basics processes exist.
+if pgrep -f 'ros2 launch swarm_basics' >/dev/null 2>&1 \
    || pgrep -f '/swarm_basics/lib/swarm_basics/' >/dev/null 2>&1; then
     die "Leftover swarm_basics processes detected from a previous run. Clean up first:
     pkill -INT -f 'ros2_ws/install'; pkill -INT -f 'ros_gz_bridge'; pkill -INT -f 'slam_toolbox'; pkill -INT -f 'nav2_'; sleep 3
@@ -697,7 +712,7 @@ fi
 
 # Gate passed -> tell the human detectors they may load YOLO now.
 #
-# With YOLO_WAIT_GATE=1 (set by run_parallel.py) each detector idles without a
+# With YOLO_WAIT_GATE=1 (the default) each detector idles without a
 # model, CUDA context or inference until this fires, so the 5 x (torch import +
 # CUDA context + model load) burst can never land inside bring-up or a recovery
 # window — which is what a fixed --detector-delay kept doing (observed firing
@@ -708,12 +723,13 @@ if [[ "${YOLO_WAIT_GATE:-0}" == "1" ]]; then
     # of RAM), so there is no reason to start them after the goal phase has
     # begun: clamp the start delay so they are always alive when the gate
     # arrives, and human detection covers the whole run.
-    # FLOAT-SAFE (2026-09-24): run_parallel.py passes e.g. "200.0", and bash
-    # arithmetic cannot evaluate a decimal — the old `(( 200.0 > 30 ))` failed
-    # silently, so the clamp never fired, the detectors started at +200 s (after
-    # the latched publisher had exited), missed /swarm_ready and left the first
-    # minutes of the tour without human data (run 2026-09-24 11:55).
-    # DEFAULT-SAFE (2026-09-25): a direct run (no run_parallel.py) does not set
+    # FLOAT-SAFE (2026-09-24): SWARM_DETECTOR_DELAY_S may be set as a decimal
+    # (e.g. "200.0"), which bash arithmetic cannot evaluate — the old
+    # `(( 200.0 > 30 ))` failed silently, so the clamp never fired, the
+    # detectors started at +200 s (after the latched publisher had exited),
+    # missed /swarm_ready and left the first minutes of the tour without human
+    # data (run 2026-09-24 11:55).
+    # DEFAULT-SAFE (2026-09-25): a direct run may not set
     # SWARM_DETECTOR_DELAY_S at all; under `set -u` the bare expansion aborted
     # the whole script right after bring-up.
     DET_DELAY_INT="${SWARM_DETECTOR_DELAY_S:-0}"
@@ -778,13 +794,18 @@ elif [[ -n "$GOALS_LAUNCH" ]]; then
 fi
 
 # --------------------------- 5) auto-stop timer -----------------------------
-# Graceful shutdown N seconds after the stack is READY (default 5 min).
+# Graceful shutdown after RUN_TIME seconds of DRIVING (default 300 = 5 min).
+# The goal node starts GOALS_DELAY after the gate, so the countdown adds that
+# offset — RUN_TIME means driving time, not time-since-READY (2026-10-12;
+# earlier runs counted from READY and got ~30 s less driving).
 # Sends SIGINT to this script, which runs the exact same cleanup as Ctrl+C, so
 # every logger flushes its summary and all CSVs/PNGs are saved.
+TIMER_OFFSET=0
+[[ -n "$GOALS_LAUNCH" && "$ready" == "true" ]] && TIMER_OFFSET="$GOALS_DELAY"
 if (( RUN_TIME > 0 )); then
-    log "Auto-stop timer armed: shutdown in ${RUN_TIME}s (disable: --run-time 0)."
+    log "Auto-stop timer armed: shutdown after ${RUN_TIME}s of driving (+${TIMER_OFFSET}s goal-node delay; disable: --run-time 0)."
     (
-        sleep "$RUN_TIME"
+        sleep "$(( TIMER_OFFSET + RUN_TIME ))"
         printf '[%s] Run time (%ss) elapsed — shutting down and saving data.\n' \
             "$(date +%H:%M:%S)" "$RUN_TIME"
         kill -INT "$$"

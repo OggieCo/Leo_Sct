@@ -1,0 +1,44 @@
+[14:28:18] Safety: nofile=65536 dds=UDPv4 clock=50Hz lidar=10Hz camera=5Hz yolo_gate=1
+[14:28:18] CPU cap: 4.6 GHz (thermal-safe; see scripts/host_cpu_cap.sh)
+[14:28:19] 4+ robots: extending Nav2 readiness timeout to 300s
+[14:28:19] 4+ robots: extending stall detection to 180s 
+[14:28:19] (Nav2 bring-up is staggered 20 s + 12 s per robot)
+[14:28:21] Mode: bt=ai  llm=true  detector=yolo  headless=true  goals=fixed  dynamic_plots=false  raw_contacts=false  scenario=9
+[14:28:21] Starting Gazebo + robots: ros2 launch swarm_basics leo_gz.launch.py headless:=true detector:=yolo enable_llm:=true bt:=ai dynamic_plots:=false log_raw_contacts:=false sim_world:=/root/ros2_ws/src/swarm_basics/scripts/../worlds/scenarios/4_rovers_3_humans/scenario.sdf
+[14:28:21] Bring-up: SEQUENTIAL — 4 stacks one at a time (90s window, up to 3 attempts each)
+[14:28:21] Waiting for robot_0 to activate (attempt 1/3, window 90s, guarded)...
+robot_0: scan flowing
+robot_0: bt_navigator active
+robot_0: ACTIVE + map OK
+READY
+[14:28:47] robot_0: ready
+[14:28:47] Waiting for robot_1 to activate (attempt 1/3, window 90s, guarded)...
+robot_1: scan flowing
+robot_1: bt_navigator active
+robot_1: ACTIVE + map OK
+READY
+[14:29:14] robot_1: ready
+[14:29:14] Waiting for robot_2 to activate (attempt 1/3, window 90s, guarded)...
+robot_2: scan flowing
+robot_2: get_state response lost - retrying
+robot_2: bt_navigator active
+robot_2: ACTIVE + map OK
+READY
+[14:29:42] robot_2: ready
+[14:29:42] Waiting for robot_3 to activate (attempt 1/3, window 90s, guarded)...
+robot_3: scan flowing
+robot_3: bt_navigator active
+robot_3: ACTIVE + map OK
+READY
+[14:30:10] robot_3: ready
+[14:30:10] Creating viz map connectors (RViz overview only)
+[14:30:10] Signalling human detectors to load YOLO (/swarm_ready, LATCHED)
+[14:30:10] READY — Nav2 active for: robot_0 robot_1 robot_2 robot_3
+[14:30:10] Starting goal node in 30s (lets the detector model loads settle): ros2 launch swarm_basics fixed_goals_all.launch.py
+[14:30:10] Auto-stop timer armed: shutdown in 300s (disable: --run-time 0).
+[14:30:10] All processes running. Send goals from another terminal, or pass --goals.
+[14:30:10] Press Ctrl+C to shut everything down early.
+[14:31:10] Human detectors loaded YOLO for all robots (human data valid)
+[14:35:10] Run time (300s) elapsed — shutting down and saving data.
+[14:35:10] Shutting down (signalling every launch process group)...
+[14:35:14] Stopped. Logs: /root/ros2_ws/src/swarm_basics/scripts/startup_logs/2026-10-09_14-28-19

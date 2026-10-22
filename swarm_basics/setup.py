@@ -48,7 +48,6 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            #'robot_supervisor_3_movements = swarm_basics.robot_supervisor_3_movements:main',
             'robot_supervisor_nav2 = swarm_basics.robot_supervisor_nav2:main',
             'coverage_plotter = swarm_basics.coverage_plotter:main',
             'bump_counter = swarm_basics.bump_counter:main',
@@ -65,8 +64,6 @@ setup(
             'robot_proximity = swarm_basics.robot_proximity:main',
             'social_event_logger = swarm_basics.social_event_logger:main',
             'llm_planner = swarm_basics.llm_planner:main',
-            # Gazebo publishes one Clock per physics step (~383 Hz observed with
-            # 4 rovers); this relays it to /clock at SWARM_CLOCK_HZ (50 Hz).
             'clock_throttle = swarm_basics.clock_throttle:main',
         ],
     },

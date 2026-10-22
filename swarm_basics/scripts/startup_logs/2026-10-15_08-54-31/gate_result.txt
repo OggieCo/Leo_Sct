@@ -1,0 +1,2 @@
+FAILED robot_0
+NOSCAN robot_0

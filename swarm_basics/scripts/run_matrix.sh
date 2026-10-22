@@ -50,7 +50,8 @@
 set -u
 
 # ------------------------------ configuration -------------------------------
-ARMS=(no reactive ai)             # no = Nav2 baseline, reactive = BT, ai = BT+LLM
+ARMS=(${SWARM_ARMS:-no reactive ai})   # no = Nav2 baseline, reactive = BT, ai = BT+LLM
+                                  # env override: SWARM_ARMS="reactive ai" bash run_matrix.sh
 # SCALED MATRIX (2026-09-17, supervisor feedback): rovers 2..5 x humans 1..3.
 #   1:2r1h   2:2r2h   3:2r3h   4:3r1h   5:3r2h   6:3r3h
 #   7:4r1h   8:4r2h   9:4r3h  10:5r1h  11:5r2h  12:5r3h
@@ -60,7 +61,8 @@ ARMS=(no reactive ai)             # no = Nav2 baseline, reactive = BT, ai = BT+L
 #    archive it and start a fresh pass when switching to this matrix.
 # Scope down if time is short — e.g. crowded columns only:
 #   SCENARIOS=(3 6 9 12 14)
-SCENARIOS=(1 2 3 4 5 6 7 8 9 10 11 12 13 14)
+SCENARIOS=(${SWARM_SCENARIOS:-1 2 3 4 5 6 7 8 9 10 11 12 13 14})
+                                  # env override: SWARM_SCENARIOS="11 12" bash run_matrix.sh
 GOALS="fixed"                     # fixed = same tours (most comparable) | random | walk
 RUN_TIME=300                      # seconds per run — KEEP IDENTICAL for every cell
 REPEATS=1                         # >1 = repetitions of every cell.  The repeat

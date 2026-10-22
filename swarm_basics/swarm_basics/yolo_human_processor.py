@@ -89,6 +89,16 @@ class YoloHumanProcessor(Node):
         self.info_pub_ = self.create_publisher(String, 'human_info', 10)
         self.wall_pub_ = self.create_publisher(Bool, 'wall_in_view', 10)
 
+        # Optional debug visualisation: the camera frame with the detected
+        # person box drawn on it.  OFF by default — an extra image stream per
+        # rover costs transport bandwidth in multi-rover runs — enable it with
+        # YOLO_DEBUG_IMAGE=1 (no launch edit or rebuild needed).
+        self.debug_image_ = os.environ.get('YOLO_DEBUG_IMAGE', '0') == '1'
+        self.debug_pub_ = None
+        if self.debug_image_:
+            self.debug_pub_ = self.create_publisher(
+                Image, 'human_detection', 5)
+
         self.bridge_ = CvBridge()
         self.lock_ = threading.Lock()
         self.latest_color_ = None
@@ -232,6 +242,47 @@ class YoloHumanProcessor(Node):
             self.get_logger().info('view clear')
             self.last_state_ = 'NO_HUMAN'
 
+    def _publish_debug(self, frame, box=None, dist=-1.0, angle=0.0,
+                       state='NO_HUMAN'):
+        """Publish the camera frame with the detected person box drawn.
+
+        Only active when YOLO_DEBUG_IMAGE=1 (visualisation aid: lets the
+        operator see what the detector sees, e.g. in RViz's Image display).
+        """
+        if self.debug_pub_ is None or frame is None:
+            return
+        canvas = frame.copy()
+        color = (0, 255, 0) if state == 'HUMAN' else (0, 165, 255)
+        if box is not None:
+            x1, y1, x2, y2 = [int(v) for v in box]
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
+            label = f'{state} {dist:.2f}m {angle:.0f}deg'
+            cv2.putText(canvas, label, (max(0, x1), max(12, y1 - 6)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+        else:
+            cv2.putText(canvas, state, (5, 15), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.45, color, 1, cv2.LINE_AA)
+        try:
+            # Build the message by hand: this container's cv_bridge raises
+            # KeyError in cv2_to_imgmsg() (its cvtype table is incomplete),
+            # although imgmsg_to_cv2() works, so the debug stream would
+            # silently stay empty.
+            h, w = canvas.shape[:2]
+            msg = Image()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.header.frame_id = 'human_detection'
+            msg.height = int(h)
+            msg.width = int(w)
+            msg.encoding = 'bgr8'
+            msg.is_bigendian = 0
+            msg.step = int(w) * 3
+            msg.data = canvas.tobytes()
+            self.debug_pub_.publish(msg)
+        except Exception as exc:  # never let visualisation break detection
+            self.get_logger().warn(
+                f'debug image publish failed: {exc!r}',
+                throttle_duration_sec=5.0)
+
     def color_cb(self, msg):
         try:
             img = self.bridge_.imgmsg_to_cv2(msg, desired_encoding='bgr8')
@@ -350,6 +401,11 @@ class YoloHumanProcessor(Node):
                 robot_suppress = (
                     self.robot_dist_ < 6.0 and
                     abs(angle - self.robot_angle_) < 40.0)
+                self._publish_debug(
+                    color, (x1, y1, x2, y2),
+                    -1.0 if robot_suppress else dist,
+                    0.0 if robot_suppress else angle,
+                    'ROBOT_NOT_HUMAN' if robot_suppress else 'HUMAN')
                 if robot_suppress:
                     last_det = now  # do NOT hold a suppressed detection
                     self._publish(False, False, -1.0, 0.0, 'ROBOT_NOT_HUMAN')
@@ -363,8 +419,11 @@ class YoloHumanProcessor(Node):
                 now = time.time()
                 if last_det > 0 and (now - last_det) < self.hold_s_:
                     self._publish(True, last_close, last_dist, last_angle, 'HUMAN')
+                    self._publish_debug(color, None, last_dist, last_angle,
+                                        'HUMAN')
                 else:
                     self._publish(False, False, -1.0, 0.0, 'NO_HUMAN')
+                    self._publish_debug(color, None, -1.0, 0.0, 'NO_HUMAN')
 
             time.sleep(0.01)
 

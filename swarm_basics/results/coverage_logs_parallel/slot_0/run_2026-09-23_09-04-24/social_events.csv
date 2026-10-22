@@ -1,3 +1,0 @@
-timestamp,elapsed_sec,robot_id,event_type,details
-1790154276.649,7.055,robot_1,HUMAN_SEEN,dist=4.91 angle=45.9
-1790154281.649,12.055,robot_0,HUMAN_SEEN,dist=2.30 angle=21.9

@@ -11,3 +11,4 @@ dist/
 # Logs / results
 *.log
 nav2_log.txt
+install/

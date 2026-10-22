@@ -748,7 +748,9 @@ class FixedGoalPublisher(Node):
         """Per-robot goal outcomes -> <run_dir>/goal_stats.csv.
 
         Works for every arm (Nav2 / BT / BT+LLM — the goal driver is shared):
-        goals_sent/succeeded/failed count REAL tour goals, scan_goals counts
+        goals_sent / goals_succeeded / goal_failures refer to the REAL tour goals
+        (goal_failures counts failed ATTEMPTS, so one goal can add several),
+        scan_goals counts
         the temporary forward-scan goals.  Rewritten on every change (tiny
         file) so a Ctrl-C can never lose the counts; coverage_plotter merges
         these rows into summary.csv.
@@ -764,7 +766,7 @@ class FixedGoalPublisher(Node):
             with open(path, 'w', newline='') as f:
                 w = csv.writer(f)
                 w.writerow(['robot_id', 'goals_sent', 'goals_succeeded',
-                            'goals_failed', 'scan_goals'])
+                            'goal_failures', 'scan_goals'])
                 for ns in self.robots:
                     r = self.robots[ns]
                     w.writerow([ns, r.get('g_sent', 0), r.get('g_ok', 0),

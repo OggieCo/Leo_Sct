@@ -1,0 +1,34 @@
+[14:45:28] Safety: nofile=65536 dds=UDPv4 clock=50Hz lidar=10Hz camera=5Hz yolo_gate=1
+[14:45:28] CPU cap: 4.6 GHz (thermal-safe; see scripts/host_cpu_cap.sh)
+[14:45:31] Mode: bt=stock  llm=false  detector=yolo  headless=true  goals=fixed  dynamic_plots=false  raw_contacts=false  scenario=5
+[14:45:31] Starting Gazebo + robots: ros2 launch swarm_basics leo_gz.launch.py headless:=true detector:=yolo enable_llm:=false bt:=stock dynamic_plots:=false log_raw_contacts:=false sim_world:=/root/ros2_ws/src/swarm_basics/scripts/../worlds/scenarios/3_rovers_2_humans/scenario.sdf
+[14:45:31] Bring-up: SEQUENTIAL — 3 stacks one at a time (90s window, up to 3 attempts each)
+[14:45:31] Waiting for robot_0 to activate (attempt 1/3, window 90s, guarded)...
+robot_0: scan flowing
+robot_0: bt_navigator active
+robot_0: ACTIVE + map OK
+READY
+[14:45:55] robot_0: ready
+[14:45:55] Waiting for robot_1 to activate (attempt 1/3, window 90s, guarded)...
+robot_1: scan flowing
+robot_1: bt_navigator active
+robot_1: ACTIVE + map OK
+READY
+[14:46:19] robot_1: ready
+[14:46:19] Waiting for robot_2 to activate (attempt 1/3, window 90s, guarded)...
+robot_2: scan flowing
+robot_2: bt_navigator active
+robot_2: ACTIVE + map OK
+READY
+[14:46:44] robot_2: ready
+[14:46:44] Creating viz map connectors (RViz overview only)
+[14:46:44] Signalling human detectors to load YOLO (/swarm_ready, LATCHED)
+[14:46:44] READY — Nav2 active for: robot_0 robot_1 robot_2
+[14:46:44] Starting goal node in 30s (lets the detector model loads settle): ros2 launch swarm_basics fixed_goals_all.launch.py
+[14:46:44] Auto-stop timer armed: shutdown in 300s (disable: --run-time 0).
+[14:46:44] All processes running. Send goals from another terminal, or pass --goals.
+[14:46:44] Press Ctrl+C to shut everything down early.
+[14:47:44] WARNING: human detector(s) never loaded YOLO: robot_0 robot_1 robot_2 — human_detected will stay 0 for them (see /root/ros2_ws/src/swarm_basics/scripts/startup_logs/2026-10-10_14-45-29/sim.log)
+[14:51:44] Run time (300s) elapsed — shutting down and saving data.
+[14:51:44] Shutting down (signalling every launch process group)...
+[14:51:47] Stopped. Logs: /root/ros2_ws/src/swarm_basics/scripts/startup_logs/2026-10-10_14-45-29

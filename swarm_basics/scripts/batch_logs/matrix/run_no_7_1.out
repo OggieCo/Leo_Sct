@@ -1,0 +1,48 @@
+[15:25:36] Safety: nofile=65536 dds=UDPv4 clock=50Hz lidar=10Hz camera=5Hz yolo_gate=1
+[15:25:36] CPU cap: 4.6 GHz (thermal-safe; see scripts/host_cpu_cap.sh)
+[15:25:36] 4+ robots: extending Nav2 readiness timeout to 300s
+[15:25:36] 4+ robots: extending stall detection to 180s 
+[15:25:36] (Nav2 bring-up is staggered 20 s + 12 s per robot)
+[15:25:38] Mode: bt=stock  llm=false  detector=yolo  headless=true  goals=fixed  dynamic_plots=false  raw_contacts=false  scenario=7
+[15:25:38] Starting Gazebo + robots: ros2 launch swarm_basics leo_gz.launch.py headless:=true detector:=yolo enable_llm:=false bt:=stock dynamic_plots:=false log_raw_contacts:=false sim_world:=/root/ros2_ws/src/swarm_basics/scripts/../worlds/scenarios/4_rovers_1_humans/scenario.sdf
+[15:25:38] Bring-up: SEQUENTIAL — 4 stacks one at a time (90s window, up to 3 attempts each)
+[15:25:38] Waiting for robot_0 to activate (attempt 1/3, window 90s, guarded)...
+robot_0: scan flowing
+robot_0: bt_navigator active
+robot_0: ACTIVE + map OK
+READY
+[15:26:02] robot_0: ready
+[15:26:02] Waiting for robot_1 to activate (attempt 1/3, window 90s, guarded)...
+robot_1: scan flowing
+robot_1: bt_navigator active
+robot_1: ACTIVE + map OK
+READY
+[15:26:26] robot_1: ready
+[15:26:26] Waiting for robot_2 to activate (attempt 1/3, window 90s, guarded)...
+robot_2: scan flowing
+TIMEOUT — still waiting for: ['robot_2(nav2,map)']
+[15:27:57] RECOVERY: robot_2 did not activate — killing its stack and retrying
+[15:28:02]   settling 10s before the next attempt
+[15:28:12] Waiting for robot_2 to activate (attempt 2/3, window 90s, guarded)...
+robot_2: scan flowing
+robot_2: bt_navigator active
+robot_2: ACTIVE + map OK
+READY
+[15:28:37] robot_2: ready
+[15:28:37] Waiting for robot_3 to activate (attempt 1/3, window 90s, guarded)...
+robot_3: scan flowing
+robot_3: bt_navigator active
+robot_3: ACTIVE + map OK
+READY
+[15:29:01] robot_3: ready
+[15:29:01] Creating viz map connectors (RViz overview only)
+[15:29:01] Signalling human detectors to load YOLO (/swarm_ready, LATCHED)
+[15:29:01] READY — Nav2 active for: robot_0 robot_1 robot_2 robot_3
+[15:29:01] Starting goal node in 30s (lets the detector model loads settle): ros2 launch swarm_basics fixed_goals_all.launch.py
+[15:29:01] Auto-stop timer armed: shutdown in 300s (disable: --run-time 0).
+[15:29:01] All processes running. Send goals from another terminal, or pass --goals.
+[15:29:01] Press Ctrl+C to shut everything down early.
+[15:30:01] WARNING: human detector(s) never loaded YOLO: robot_0 robot_1 robot_2 robot_3 — human_detected will stay 0 for them (see /root/ros2_ws/src/swarm_basics/scripts/startup_logs/2026-10-10_15-25-36/sim.log)
+[15:34:01] Run time (300s) elapsed — shutting down and saving data.
+[15:34:01] Shutting down (signalling every launch process group)...
+[15:34:05] Stopped. Logs: /root/ros2_ws/src/swarm_basics/scripts/startup_logs/2026-10-10_15-25-36

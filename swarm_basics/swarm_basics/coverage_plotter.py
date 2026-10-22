@@ -338,7 +338,10 @@ class CoveragePlotter(Node):
                 w.writerow([f'{ns}_bumps', bumps])
             # Goal outcomes written by the goal driver (fixed_goals /
             # random_goals) -> merged here so every arm's summary carries
-            # success/failure counts (goals_sent/succeeded/failed + scans).
+            # success/failure counts (goals_sent / goals_succeeded /
+            # goal_failures + scans).  `goal_failures` counts failed ATTEMPTS
+            # (one goal can fail several times); runs collected before
+            # 2026-10-14 name the same column `goals_failed`, so read both.
             goal_stats = self.csv_dir / 'goal_stats.csv'
             if goal_stats.exists():
                 try:
@@ -351,8 +354,9 @@ class CoveragePlotter(Node):
                                         row.get('goals_sent')])
                             w.writerow([f'goals_succeeded_{rid}',
                                         row.get('goals_succeeded')])
-                            w.writerow([f'goals_failed_{rid}',
-                                        row.get('goals_failed')])
+                            w.writerow([f'goal_failures_{rid}',
+                                        row.get('goal_failures',
+                                                row.get('goals_failed'))])
                             w.writerow([f'goals_scan_{rid}',
                                         row.get('scan_goals')])
                 except OSError:

@@ -1,8 +1,8 @@
 <!--
-  social_nav.xml - LLM-driven social navigation Behavior Tree (2026-08-23).
+  social_nav.xml - LLM-driven social navigation Behavior Tree.
 
-  The LLM (llm_planner, gpt-4o-mini) decides the social action; the BT
-  EXECUTES it.  Reactive rules remain as the safety net only when the LLM
+  The LLM (llm_planner, gpt-4o-mini) decides the social action, the BT
+  exzecutes it. Reactive rules remain as the safety net only when the LLM
   is silent (empty/unknown action).
 
   Structure mirrors reactive_nav.xml (replan + recovery identical) so the
@@ -20,12 +20,6 @@
 
   If llm_action is empty (no planner) or unknown, every branch FAILS and
   the reactive HumanAwareFollow safety net takes over.
-
-  FIX 2026-09-14 (run_2026-09-14_09-49-07): every maneuver branch ends with
-  FollowPath (…ThenGo sequences).  A completed maneuver must NEVER terminate
-  the navigation: Arc/Stop/Back SUCCESS used to propagate to the root,
-  NavigateToPose reported SUCCEEDED (some goals in 40 ms) and the tour
-  skipped waypoints the rover never reached.
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
