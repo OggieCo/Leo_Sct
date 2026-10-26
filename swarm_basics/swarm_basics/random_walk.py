@@ -208,10 +208,9 @@ def main(args=None):
     node = RandomWalk()
 
     def _on_sigint(sig, frame):
-        # rclpy installs its own SIGINT handler that calls rclpy.shutdown() and
-        # invalidates the context BEFORE we can publish a stop — that's why the
-        # rover kept driving on Ctrl+C. Override it so the context stays alive
-        # long enough to flush cmd_vel=0 to Gazebo, then unwind normally.
+        # Rclpy installs its own SIGINT handler that calls rclpy.shutdown() and
+        # invalidates the context BEFORE we can publish a stop - that's why the rover
+        # kept driving on Ctrl+C.
         try:
             node.hard_stop()
             node.get_logger().info('Stopping robot...')

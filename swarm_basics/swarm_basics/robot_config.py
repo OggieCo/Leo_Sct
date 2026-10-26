@@ -15,32 +15,21 @@ ROBOT_POSITIONS = [
 
     # --- scripted scenarios (activate by uncommenting one block) ---
 
-    # offset head-on / "both-way": parallel lines 0.6 m apart, each robot sees
-    # the other on its LEFT at first contact (+~14 deg) -> both arc.
-    #("robot_0", -2.5, -0.3, 0.0),        # east  along y=-0.3
-    #("robot_1",  2.5,  0.3, 3.1416),     # west  along y=+0.3
+    # Offset head-on / "both-way": parallel lines 0.6 m apart, each robot sees the other
+    # on its LEFT at first contact (+~14 deg) -> both arc.
 
-    # 90°
-    #("robot_0",  0.0,  3.0, 4.7124),
-    #("robot_1", -3.0,  0.0, 0.0),
+    # 90° ("robot_0", 0.0, 3.0, 4.7124), ("robot_1", -3.0, 0.0, 0.0)
 
-    # 135°
-    #("robot_0",  0.0,  3.0, 4.7124),
-    #("robot_1", -2.12, -2.12, 0.7854),
+    # 135° ("robot_0", 0.0, 3.0, 4.7124), ("robot_1", -2.12, -2.12, 0.7854)
 
-    # head-on
-    #("robot_0",  0, 2.5, 4.7124),
-    #("robot_1",  0, -2.5, 1.5708),
+    # Head-on ("robot_0", 0, 2.5, 4.7124), ("robot_1", 0, -2.5, 1.5708)
 
     # human (robot_0 only)
     #("robot_0",  0.0,  3.0, 4.7124),
 ]
 
-# Seed-scenario override (set by start_experiment.sh --seed): when
-# SWARM_SCENARIO_JSON points at a generated scenario file, the rover set and
-# spawn poses come from THERE instead of the hardcoded list above, so the
-# spawner, Nav2/SLAM, goal nodes, bridges and the coverage plotter all agree
-# on the same layout.  A missing/malformed file silently keeps the defaults.
+# Seed-scenario override (start_experiment.sh --seed): SWARM_SCENARIO_JSON makes
+# the rover set and spawn poses come from that file instead of the list above.
 _scenario_path = os.environ.get("SWARM_SCENARIO_JSON", "")
 if _scenario_path and os.path.isfile(_scenario_path):
     try:

@@ -1,20 +1,13 @@
 """Scenario-aware validation of the fixed tour waypoints (TEST-HARNESS tool).
 
-The per-robot tours in fixed_goals.py were authored for the open arena.  A
-waypoint that falls inside a static obstacle footprint (+ clearance) is
-physically unreachable: the global planner cannot plan INTO a lethal /
-inscribed costmap cell, and Nav2's goal checker (xy 0.25 m) can never be
-satisfied — the rover burns the run in plan-abort / scan-retry loops.
+A waypoint inside a static obstacle footprint is physically unreachable: the
+planner cannot enter a lethal costmap cell and Nav2's goal checker (xy 0.25 m)
+can never be satisfied, so the rover burns the run in abort/scan-retry loops.
 
-Seen 2026-09-14 in 3_rovers_and_obstacles: goal #2 = (0, -2) sits INSIDE the
-box at (0.23, -1.89); robot_1 never advanced past it for the whole 300 s run
-(Nav2 and BT arms too: 3-4 failed attempts then endless scan-retry loops).
-
-sanitize_tour() snaps such waypoints radially out of the obstacle keepout
-ring.  Deterministic (no RNG) -> every arm (Nav2 / BT / BT+LLM) sees the
-exact same sanitized tour, so the comparison stays fair.  This is experiment
-INPUT validation, not navigation policy — all navigation decisions stay in
-the behavior trees.  No-op when the active scenario has no static obstacles.
+sanitize_tour() snaps such waypoints radially out of the obstacle keepout ring.
+Deterministic (no RNG), so every arm (Nav2 / BT / BT+LLM) drives the same tour.
+This is experiment INPUT validation, not navigation policy; no-op when the
+active scenario has no static obstacles.
 
 Pure stdlib (no ROS imports) so it can be dry-run offline:
     python3 -c "..." see tests/dry-run in the session notes.
@@ -24,9 +17,8 @@ import json
 import math
 import os
 
-# Keep goal cells fully outside the global costmap inflation ring so the
-# planner treats them as ordinary free cells (nav2_generic.yaml:
-# global inflation_radius 0.7, robot_radius 0.3, goal xy tolerance 0.25).
+# Keep goal cells outside the global inflation ring (0.7 m, robot 0.3, tolerance
+# 0.25) so the planner treats them as ordinary free cells.
 CLEARANCE = 0.70
 
 
@@ -110,7 +102,7 @@ def sanitize_waypoint(x, y, obstacles, margin=CLEARANCE):
     and steps along the push ray to reach the EXACT clearance — a radial
     jump adds less than `margin` of perpendicular clearance when the exit
     is near a rectangle corner (would otherwise be a fixed point a few mm
-    short of the ring, seen in the first dry-run 2026-09-14).
+    short of the ring).
     """
     pushed_from = None
     px, py = float(x), float(y)

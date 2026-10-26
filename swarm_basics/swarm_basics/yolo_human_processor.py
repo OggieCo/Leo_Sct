@@ -42,22 +42,15 @@ class YoloHumanProcessor(Node):
         self.declare_parameter('input_size', 640)
         self.declare_parameter('hfov', 1.51844)
         self.declare_parameter('detection_hold_s', 1.0)
-        # Max inference-rate control (2026-09-18 load fix): at 5 Hz per robot
-        # × 5 robots the YOLO workers saturated the CPU and starved SLAM/Nav2
-        # bringup.  0.33 s ≈ 3 Hz is plenty for human proximity at rover
-        # speeds.  Set 0.0 to disable the throttle (infer on every frame).
+        # Max inference-rate control: at 5 Hz per robot × 5 robots the YOLO workers
+        # saturated the CPU and starved SLAM/Nav2 bringup. 0.33 s ≈ 3 Hz is plenty for
+        # human proximity at rover speeds.
         self.declare_parameter('process_period_sec', 0.33)
 
         # --- compute placement -------------------------------------------
-        # Env-overridable so the launch / parallel harness can tune a run
-        # WITHOUT editing code (each robot gets its own process, so these are
-        # per-robot settings):
-        #   YOLO_DEVICE=cuda|0|cpu   run inference on the GPU (RTX 3050 Ti)
-        #   YOLO_TORCH_THREADS=N     cap torch CPU threads per worker.  The
-        #                            default is 8 = nproc/2, so five workers
-        #                            would demand 40 threads on a 16-thread
-        #                            box and thrash (the main 5-rover FPS
-        #                            killer after per-frame inference).
+        # Per-process settings, tunable from the launch/harness without editing code:
+        #   YOLO_DEVICE=cuda|0|cpu   GPU inference (RTX 3050 Ti)
+        #   YOLO_TORCH_THREADS=N     torch CPU threads per worker (default nproc/2)
         #   YOLO_PERIOD=0.33         inference period (s) -> ~3 Hz
         #   YOLO_HALF=1              FP16 inference (GPU only)
         self.declare_parameter('device', os.environ.get('YOLO_DEVICE', 'cpu'))
@@ -89,10 +82,8 @@ class YoloHumanProcessor(Node):
         self.info_pub_ = self.create_publisher(String, 'human_info', 10)
         self.wall_pub_ = self.create_publisher(Bool, 'wall_in_view', 10)
 
-        # Optional debug visualisation: the camera frame with the detected
-        # person box drawn on it.  OFF by default — an extra image stream per
-        # rover costs transport bandwidth in multi-rover runs — enable it with
-        # YOLO_DEBUG_IMAGE=1 (no launch edit or rebuild needed).
+        # Optional debug visualisation: the camera frame with the detected person box
+        # drawn on it.
         self.debug_image_ = os.environ.get('YOLO_DEBUG_IMAGE', '0') == '1'
         self.debug_pub_ = None
         if self.debug_image_:
@@ -120,13 +111,10 @@ class YoloHumanProcessor(Node):
 
         # --- YOLO model: load now, or wait for the Nav2 readiness gate -------
         # Loading the model costs a torch import, a CUDA context and VRAM per
-        # rover.  With 5 rovers that is a multi-second CPU+GPU burst, and it has
-        # repeatedly landed inside bring-up or a recovery window and made things
-        # worse (2026-09-23: five workers fired at 200 s while a full Nav2/SLAM
-        # restart was running, and at 300 s while a surgical restart ran).  A
-        # fixed delay only moves the problem, because the gate takes ~60 s in a
-        # good run and 400 s in a bad one.
-        # YOLO_WAIT_GATE=1 makes it EVENT-DRIVEN: the detector idles until
+        # rover, and that multi-second burst has repeatedly landed inside
+        # bring-up or a recovery window and made things worse.  A fixed delay
+        # only moves the problem (the gate takes ~60 s in a good run, 400 s in a
+        # bad one), so YOLO_WAIT_GATE=1 makes it event-driven:
         # start_experiment.sh publishes /swarm_ready once the gate has passed —
         # which is exactly when detections are first needed.
         self.model_ = None
@@ -135,17 +123,9 @@ class YoloHumanProcessor(Node):
             from std_msgs.msg import Bool as _Bool
             from rclpy.qos import (QoSProfile, QoSDurabilityPolicy,
                                    QoSReliabilityPolicy)
-            # ABSOLUTE topic: the detector nodes live in /robot_N namespaces, so
-            # a relative name would resolve to /robot_N/swarm_ready and never
-            # match the single signal the launcher publishes.
-            # TRANSIENT_LOCAL ("latched"): the launcher can publish the gate
-            # BEFORE this process exists — the detectors are delayed, and since
-            # the sequential bring-up a healthy gate passes in ~100 s while the
-            # detectors start at ~200 s.  A volatile one-shot signal was missed
-            # by all four detectors on 2026-09-23 11:44, and that whole run
-            # recorded human_detected=0 / human_distance=-1 while the bumper log
-            # showed 15+ contacts with human_*_bumper.  A latched publisher
-            # hands the last value to ANY later subscriber.
+            # ABSOLUTE topic: the detector nodes live in /robot_N namespaces, so a
+            # relative name would resolve to /robot_N/swarm_ready and never match the
+            # single signal the launcher publishes.
             gate_qos = QoSProfile(
                 depth=1,
                 reliability=QoSReliabilityPolicy.RELIABLE,
@@ -157,9 +137,8 @@ class YoloHumanProcessor(Node):
                 f'detector idle — waiting for the Nav2 gate on '
                 f'{self.gate_topic_} (YOLO_WAIT_GATE=1): no model, no CUDA '
                 f'context, no inference until navigation is live')
-            # SAFETY NET: a gate that never arrives must not silently remove
-            # human detection from a whole dataset.  Load anyway after
-            # YOLO_GATE_FALLBACK_S seconds (0 disables) and say so loudly.
+            # SAFETY NET: a gate that never arrives must not silently remove human
+            # detection from a whole dataset.
             self.gate_fallback_s_ = float(
                 os.environ.get('YOLO_GATE_FALLBACK_S', '240'))
             if self.gate_fallback_s_ > 0:
@@ -197,12 +176,8 @@ class YoloHumanProcessor(Node):
             import torch
             if self.torch_threads_ > 0:
                 torch.set_num_threads(self.torch_threads_)
-                # ultralytics calls torch.set_num_threads(NUM_THREADS) every
-                # time it selects a CPU device (select_device), which would undo
-                # the cap above and hand every rover 8 threads (5 rovers = 40
-                # threads on a 16-thread box).  Align its constant as well so
-                # the CPU fallback stays bounded; on CUDA that path is never
-                # taken.
+                # Ultralytics calls torch.set_num_threads() on CPU device select,
+                # which would undo the cap above (5 rovers x 8 threads = thrash).
                 try:
                     import ultralytics.utils.torch_utils as _tu
                     _tu.NUM_THREADS = self.torch_threads_
@@ -263,10 +238,9 @@ class YoloHumanProcessor(Node):
             cv2.putText(canvas, state, (5, 15), cv2.FONT_HERSHEY_SIMPLEX,
                         0.45, color, 1, cv2.LINE_AA)
         try:
-            # Build the message by hand: this container's cv_bridge raises
-            # KeyError in cv2_to_imgmsg() (its cvtype table is incomplete),
-            # although imgmsg_to_cv2() works, so the debug stream would
-            # silently stay empty.
+            # Build the message by hand: this container's cv_bridge raises KeyError in
+            # cv2_to_imgmsg() (its cvtype table is incomplete), although imgmsg_to_cv2()
+            # works, so the debug stream would silently stay empty.
             h, w = canvas.shape[:2]
             msg = Image()
             msg.header.stamp = self.get_clock().now().to_msg()
@@ -359,9 +333,8 @@ class YoloHumanProcessor(Node):
             fx = (img_w / 2.0) / math.tan(self.hfov_ / 2.0)
 
             if self.model_ is None:
-                # Event-driven detector (YOLO_WAIT_GATE=1): the Nav2 gate has
-                # not passed yet, so there is nothing to detect for.  Idle
-                # without touching the GPU.
+                # Event-driven detector (YOLO_WAIT_GATE=1): the Nav2 gate has not passed
+                # yet, so there is nothing to detect for.
                 time.sleep(0.2)
                 continue
 
@@ -391,13 +364,9 @@ class YoloHumanProcessor(Node):
                 close = 0.0 < dist < self.close_dist_
                 now = time.time()
 
-                # SUPPRESS robot-as-human false positives: if a real robot is
-                # in roughly the same direction, the "person" is the rover's
-                # body (YOLO false positive).  Publish NO_HUMAN.
-                # Range 6.0 m: robot_proximity tracks the true (world-pose)
-                # distance to the nearest robot, and the depth read stays
-                # ~1.5 m even for a rover several metres away — so a narrow
-                # 2.5 m gate let a facing rover through as a "human".
+                # SUPPRESS robot-as-human false positives: if a real robot is in roughly
+                # the same direction, the "person" is the rover's body (YOLO false
+                # positive).
                 robot_suppress = (
                     self.robot_dist_ < 6.0 and
                     abs(angle - self.robot_angle_) < 40.0)

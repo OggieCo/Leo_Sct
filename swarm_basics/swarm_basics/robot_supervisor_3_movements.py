@@ -145,18 +145,6 @@ class RobotSupervisor(Node):
             twist.linear.x = -0.5
             twist.angular.z = 0.0      
 
-
-        # elif ev_name == "EV_V4": # RED
-        #     if self.target_distance > 1.0 and self.target_distance < 0.5:
-        #         twist.linear.x = 0.2
-        #         twist.angular.z = -1.0 * self.target_offset
-        #         self.get_logger().info(f"Going toward: offset={self.target_offset:.2f}, dist={self.target_distance:.2f}")
-
-        # elif ev_name == "EV_V5": # BLUE  
-        #         twist.linear.x = 0.0
-        #         twist.angular.z = -1.0 * abs(self.target_offset)
-        #         self.get_logger().info(f"Escaping: offset={self.target_offset:.2f}, dist={self.target_distance:.2f}")
-           
         else:
             # Unknown or no event -> stop for safety
             twist.linear.x = 0.0

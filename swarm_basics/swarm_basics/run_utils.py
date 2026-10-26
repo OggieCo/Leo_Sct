@@ -45,10 +45,8 @@ _RECENT_SECONDS = 5.0
 # splintering a second folder.
 _ACTIVE_SECONDS = 60.0
 
-# Contact -> bump episode cooldown, SHARED by bump_counter, coverage_plotter
-# and social_event_logger so all three counters agree 1:1: one BUMP / one
-# CONTACT_BEGIN+END pair per contact episode; a sustained press counts once,
-# and only a real >= CONTACT_COOLDOWN_SEC separation re-arms the entity.
+# Contact -> bump episode cooldown, SHARED by bump_counter, coverage_plotter and
+# social_event_logger so all three agree 1:1 (one event per contact episode).
 CONTACT_COOLDOWN_SEC = 3.0
 
 
@@ -80,13 +78,11 @@ def _active_run_id():
 
 
 def _batch_name(root):
-    """Batch tag for NEW run folder names under `root` (= MODE/scenario dir).
+    """Batch tag used as a prefix of new run folder names under `root`.
 
-    SWARM_BATCH (exported per pass by run_matrix.sh, e.g. 'batch_2') pins
-    the data-collection campaign; the tag becomes part of every run-folder
-    NAME — batch_2_run_2026-09-14_10-07-30 — instead of an extra folder
-    level (the scenario folder already separates seeds).  Without SWARM_BATCH
-    a manual run JOINS the newest existing batch, or starts with batch_1."""
+    SWARM_BATCH (exported per pass by run_matrix.sh, e.g. 'batch_2') pins the
+    data-collection campaign.  Without it a manual run joins the newest
+    existing batch, or starts with batch_1."""
     name = os.environ.get('SWARM_BATCH', '').strip()
     if name:
         return ''.join(c if (c.isalnum() or c in '-_') else '_' for c in name)
@@ -122,9 +118,8 @@ def get_run_dir():
     """Return the shared Path for the current run (creates it if needed)."""
     override = os.environ.get('SWARM_RUN_DIR', '').strip()
     if override:
-        # Ad-hoc / GUI runs ("random runs"): everything lands directly in
-        # that folder with plain run_<timestamp> names, no MODE/scenario/
-        # batch structure.
+        # Ad-hoc / GUI runs ("random runs"): everything lands directly in that folder
+        # with plain run_<timestamp> names, no MODE/scenario/ batch structure.
         root = Path(override)
         prefix = ''
     else:
@@ -134,16 +129,9 @@ def get_run_dir():
 
     rid = _active_run_id()
     if rid:
-        # Deterministic: start_experiment.sh exported the run id before
-        # launching anything, so every node — however late it starts (the
-        # goal drivers wait for the Nav2 readiness gate) — resolves to the
-        # same <prefix>run_<id> folder, goal_stats.csv included.
-        # JOIN the folder whichever mode root already has it (the sim/Nav2
-        # launch creates it with the authoritative mode); only create it
-        # ourselves if nobody did yet.  This keeps a run in ONE folder even
-        # when a node's SWARM_RUN_MODE is missing — the goal drivers used to
-        # default to BT_LLM and misfile goal_stats.csv into
-        # BT_LLM/<scenario>/ (observed: BT run 2026-09-13_17-13-39).
+        # JOIN the folder whichever mode root already has it (the sim/Nav2 launch
+        # creates it with the authoritative mode); only create it ourselves if nobody
+        # did yet.
         if not override:
             for mode in _MODES:
                 mode_root = _scenario_root(BASE_DIR / mode)

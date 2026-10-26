@@ -282,9 +282,8 @@ class SocialEventLogger(Node):
 
     # ---- shutdown summary -----------------------------------------------
     def on_shutdown(self):
-        # Rebuild from the event file (authoritative) and REWRITE rather than
-        # append, so a second call cannot duplicate rows now that the summary
-        # is already kept up to date during the run.
+        # Rebuild from the event file (authoritative) and rewrite, so a second
+        # call cannot duplicate rows.
         counts = {}
         with open(self.event_path) as f:
             next(f)

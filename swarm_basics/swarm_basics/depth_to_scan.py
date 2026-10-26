@@ -63,9 +63,8 @@ class DepthToScan(Node):
         scan.range_max = 10.0
 
         # --- Horizon row selection ---
-        # Camera is pitched down 17° (-0.3 rad) in URDF.
-        # VFOV ≈ 71° (calculated from HFOV 87° and aspect ratio)
-        # The horizon (0° pitch) is at ~25% from top of the image
+        # Camera is pitched down 17 deg in URDF; the horizon sits at ~25 % of
+        # the image height (VFOV ~71 deg from HFOV 87 deg).
         vfov = 2.0 * np.arctan(np.tan(hfov / 2.0) * msg.height / msg.width)
         pitch = -0.3
         horizon_row = int((vfov / 2.0 - abs(pitch)) / vfov * msg.height)

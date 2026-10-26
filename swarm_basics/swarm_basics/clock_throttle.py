@@ -1,39 +1,24 @@
 #!/usr/bin/env python3
 """clock_throttle — republish Gazebo's physics-rate clock at a sane rate.
 
-Gazebo publishes one `rosgraph_msgs/Clock` message per PHYSICS STEP (the world's
-max_step_size, 1 ms here), and `ros_gz_bridge` forwards every single one to ROS.
+Gazebo publishes one `rosgraph_msgs/Clock` message per PHYSICS STEP (1 ms here)
+and `ros_gz_bridge` forwards every one to ROS, which measured ~383 Hz.  With
+~15 `use_sim_time` nodes per rover the executors starve on clock callbacks and
+the symptoms look like unrelated bugs (costmaps frozen in 'Activating' with the
+clock stuck at startup, slam_toolbox filter-queue overflows, lifecycle
+get_state timeouts).
 
-MEASURED 2026-09-23 (4 rovers, RTF 0.38): **383 Hz on /clock**.  Every node
-running with `use_sim_time:=true` subscribes to it, so with ~15 sim-time nodes
-per rover that is tens of thousands of callbacks per second whose only job is to
-advance the clock.  The executors then starve, and the symptoms look like
-unrelated bugs:
+Sim time needs no such rate: control runs at 20 Hz, the Nav2 BT tick at 100 Hz.
+This node keeps the NEWEST sample and republishes it at `rate_hz` (default 50),
+cutting the feed ~8x with zero fidelity cost - time stays monotonic.
 
-  * Nav2 costmaps frozen in 'Activating' with their clock stuck at 0.7 s
-    (the sim time they saw at startup) -> "Timed out waiting for transform ...
-    Lookup would require extrapolation into the past. Requested time 0.700000
-    but the earliest data is at time 79.750000"
-  * slam_toolbox overflowing its message-filter queue -> "discarding message
-    because the queue is full" -> no map -> the readiness gate can never pass
-  * lifecycle "failed to send response to .../get_state (timeout)" aborts
-
-None of that is a logic bug: it is timekeeping traffic crowding out real work.
-
-Sim time does not need 383 Hz.  Control runs at 20 Hz, the Nav2 BT tick at
-100 Hz, and mapping reacts in the hundreds of milliseconds.  This node keeps the
-NEWEST sample and republishes it at `rate_hz` (default 50), cutting the feed ~8x
-with zero fidelity cost: time still advances monotonically, consumers just see
-it in 20 ms steps instead of 2.6 ms ones.
-
-Wiring (launch/leo_gz.launch.py): the clock bridge's ROS side is remapped to
-/clock_raw so this node owns /clock.
+Wiring (launch/leo_gz.launch.py): the clock bridge is remapped to /clock_raw so
+this node owns /clock.
 
     /clock_raw (bridge, ~383 Hz)  -->  clock_throttle  -->  /clock (50 Hz)
 
-The publisher is RELIABLE on purpose: a reliable publisher satisfies BOTH
-reliable and best-effort subscribers, whereas best-effort would silently starve
-any consumer that asks for reliability (rclpy's TimeSource does).
+The publisher is RELIABLE on purpose: that satisfies both reliable and
+best-effort subscribers (rclpy's TimeSource asks for reliability).
 """
 
 import rclpy

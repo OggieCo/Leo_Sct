@@ -35,11 +35,8 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool, Float32
 
-# Stale-cap watchdog: if the LLM speed cap stays at ~0 longer than this while
-# the controller is demanding motion, treat it as a stale stop/yield latch
-# and release it (run_2026-09-14_09-49-07: the cap froze at 0 after a stop
-# while the model kept deciding "proceed" — DWB commanded motion but every
-# command was scaled to 0 and two rovers parked 0.75 m apart for 80 s+).
+# Stale-cap watchdog: if the LLM speed cap stays at ~0 longer than this while the
+# controller is demanding motion, treat it as a stale stop/yield latch and release it.
 LLM_ZERO_TIMEOUT_S = 8.0
 
 
@@ -48,27 +45,16 @@ class VelocityAdaptor(Node):
         super().__init__('velocity_adaptor')
         self.ns = self.get_namespace().strip('/') or 'root'
 
-        # TOLERANCE PASS (run_2026-09-13_13-23-21: robot_0 spent 33 % of the
-        # sampled seconds fully stopped — 18 s of it with a human merely in
-        # `human_close` range — so the walk was dominated by polite braking
-        # near EVERY human seen).  Humans still slow the rover smoothly, but
-        # only once they are actually relevant: braking now starts at 1.8 m
-        # (was 2.5 m = every human in the room), the side term is much weaker
-        # (0.65..1.0 vs 0.5..1.0) and a crossing human can no longer crush the
-        # command (motion floor 0.45, was 0.15).
+        # TOLERANCE PASS. Humans still slow the rover smoothly, but only once they are
+        # actually relevant: braking now starts at 1.8 m, the side term is much weaker
+        # and a crossing human can no longer crush the command.
         self.declare_parameter('d_stop', 0.35)        # m  -> scale 0
-        # 1.8 -> 1.2 m (2026-09-13, user request): braking now starts only when
-        # the person is genuinely near.  At 0.5 m/s cruise the deceleration to
-        # the 0.35 m floor still fits comfortably inside 1.2 m, and the
-        # "always slowing" band in front of people shrinks accordingly.
+        # 1.8 -> 1.2 m: braking now starts only when the person is genuinely near.
         self.declare_parameter('d_slow', 1.2)         # m  -> start slowing
         self.declare_parameter('rate_max', 90.0)      # deg/s -> min factor
         self.declare_parameter('rate_min_factor', 0.45)
-        # Detection hold (s): keep the last human term after `human_detected`
-        # drops instead of snapping back to 1.0 in one frame.  Without it the
-        # speed jumped 0.22 -> 1.00 -> 0.00 as the detector lost/re-found a
-        # person beside the rover (run_2026-09-13_14-23-26) — half of the
-        # "drive fast then stop for a moment" rhythm while passing humans.
+        # Detection hold (s): keep the last human term after `human_detected` drops
+        # instead of snapping back to 1.0 in one frame.
         self.declare_parameter('det_hold_s', 1.5)
 
         # Robot-robot proximity (from robot_proximity, same namespace)
@@ -94,14 +80,7 @@ class VelocityAdaptor(Node):
         self._llm_zero_since = None
         self._llm_zero_warned = False
         self._sub_llm = self.create_subscription(Float32, 'llm_speed_scale', self.llm_cb, 10)
-        # Speed FLOOR (llm_planner): 0..1, 0 = no floor.  While one of OUR
-        # maneuvers is active (arc commit) or we hold the right-of-way over a
-        # peer that committed "yield", the robot proximity term must not pin
-        # the drive at ~0 — the maneuver needs motion to produce separation
-        # (run_2026-09-13_13-05-24: the right-of-way holder sat at robot
-        # term ~0.19 while its LLM said "proceed").  Only llm_planner
-        # publishes this topic, so the pure-BT and Nav2 conditions keep the
-        # exact previous behaviour (floor stays 0.0).
+        # Speed FLOOR (llm_planner): 0..1, 0 = no floor.
         self._floor = 0.0
         self._sub_floor = self.create_subscription(
             Float32, 'social_speed_floor', self.floor_cb, 10)
@@ -200,12 +179,9 @@ class VelocityAdaptor(Node):
             d = 0.35 if self._close else 1.2   # fallback: close -> near-stop
         d_stop = self.get_parameter('d_stop').value
         d_slow = self.get_parameter('d_slow').value
-        # DISTANCE GATE (run_2026-09-13_13-49-07: robot_0 paid a constant
-        # 11-16 % speed tax for humans 3-9 m away, off to the side — the
-        # angle and motion terms multiplied in with NO range gate, so every
-        # human ever seen slowed the rover).  Beyond the slowdown range a
-        # human is not our conflict yet: return full speed; the braking
-        # ramp below (and every other layer) applies inside d_slow only.
+        # DISTANCE GATE. Beyond the slowdown range a human is not our conflict yet:
+        # return full speed; the braking ramp below (and every other layer) applies
+        # inside d_slow only.
         if d >= d_slow:
             self._last_human_term = 1.0
             return 1.0
@@ -268,29 +244,20 @@ class VelocityAdaptor(Node):
         t = min(max((lon - lon_stop) / (lon_slow - lon_stop), 0.0), 1.0)
         lon_term = math.sqrt(t)        # sqrt -> smooth gradient deceleration
 
-        # Complementary combination: a safe lateral pass (lat_term -> 1) keeps
-        # FULL speed no matter how small lon is (the rover is beside us, NOT
-        # in our way).  Only when BOTH lat and lon are small do we slow down.
+        # Complementary combination: a safe lateral pass (lat_term -> 1) keeps FULL
+        # speed no matter how small lon is (the rover is beside us, NOT in our way).
         return 1.0 - (1.0 - lat_term) * (1.0 - lon_term)
 
     # -- output ------------------------------------------------------------
     def cmd_cb(self, msg):
-        # Human term first (priority), then the robot term with the maneuver
-        # floor applied (an active arc / right-of-way holder may not be
-        # strangled by the proximity brake), then the LLM cap (stop/yield
-        # still wins: llm_scale == 0 multiplies everything to 0).
+        # Human term first, then the robot term with the maneuver floor applied, then
+        # the LLM cap.
         llm = self._llm_scale
         if (llm <= 0.02 and self._llm_zero_since is not None
                 and abs(msg.linear.x) > 0.02
                 and time.time() - self._llm_zero_since > LLM_ZERO_TIMEOUT_S):
-            # STALE-CAP WATCHDOG (run_2026-09-14_09-49-07): a stop/yield
-            # latch in llm_planner left llm_speed_scale at 0 while the model
-            # kept deciding "proceed"; the adaptor log showed
-            # human_dist=inf, robot term fine, floor=0, scale=0.00 — the LLM
-            # cap alone froze the rover permanently.  Stops/yields are
-            # designed to last seconds; a longer zero with motion demanded
-            # is a stale latch -> release it.  The human/robot terms below
-            # still apply, so the physical safety layers keep braking.
+            # STALE-CAP WATCHDOG: an LLM cap stuck at 0 while the base command moves
+            # means a latched stop/yield - ignore the cap.
             llm = 1.0
             if not self._llm_zero_warned:
                 self._llm_zero_warned = True
@@ -303,12 +270,8 @@ class VelocityAdaptor(Node):
         out = Twist()
         out.linear.x = msg.linear.x * s
         out.linear.y = msg.linear.y * s
-        # Scale angular too: near another robot/human the rover must NOT
-        # pirouette in place (adhesive wheels).  When the controller wants to
-        # rotate while linear is suppressed (s -> 0), we drop the yaw rate as
-        # well — no in-place spin.  When clear (s=1) turning is unaffected.
-        # (Observed run_2026-08-23_17-56-11: post-arc re-orientation spun the
-        #  rovers in place at cmd_lin=0 / cmd_ang=-1 for ~8 s.)
+        # Scale angular too: near another robot/human the rover must NOT pirouette in
+        # place (adhesive wheels).
         out.angular.z = msg.angular.z * s
         self._pub_cmd.publish(out)
         fs = Float32()

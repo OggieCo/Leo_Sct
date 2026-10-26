@@ -129,11 +129,8 @@ class RobotProximity(Node):
                 dca = math.hypot(rx + vrx * tca, ry + vry * tca)
             faster = math.hypot(ox_, oy_) > math.hypot(mx, my) + 0.1
 
-        # Heading opposition: 0 = perfectly head-on (headings 180 deg apart),
-        # 90 = perpendicular crossing, 180 = same heading.  Lets the reactive
-        # away-arc and the LLM "headon" commit distinguish a mirror-symmetric
-        # head-on (away-arcs DIVERGE) from a crossing (away-arcs CONVERGE,
-        # run_2026-08-24_15-47-45).
+        # Heading opposition: 0 = perfectly head-on (headings 180 deg apart), 90 =
+        # perpendicular crossing, 180 = same heading.
         hdiff = math.degrees(my_yaw) - math.degrees(poses[name][2])
         while hdiff > 180.0:
             hdiff -= 360.0
