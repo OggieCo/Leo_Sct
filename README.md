@@ -1,8 +1,6 @@
 # Socially Aware Multi-Robot Navigation in Human-Populated Environments
 
-Code for my B.Sc. thesis at TU Darmstadt. Multiple Leo rovers navigate a shared,
-human-populated arena in Ignition Gazebo while their navigation stacks are
-compared under identical conditions.
+Code for my B.Sc. thesis at TU Darmstadt. Multiple Leo rovers navigate a shared, human-populated arena in Ignition Gazebo while their navigation stacks are compared under identical conditions.
 
 The question is whether explicit social behavior — giving way, passing on the
 proper side, keeping distance to people — scales to a small fleet, or whether a
@@ -64,9 +62,9 @@ bash src/swarm_basics/scripts/start_experiment.sh \
 ```
 
 Other useful options: `--headless` (no GUI), `--goals random|fixed|walk`,
-`--scenario N` (1–14, see `worlds/scenario_generator.py`).
+`--scenario N` (1–12, see `worlds/scenario_generator.py`).
 
-The full experiment matrix (arms × scenarios, sequential, resumable) runs
+The full experiment matrix (configuration × scenarios, sequential, resumable) runs
 unattended:
 
 ```bash
@@ -115,7 +113,3 @@ Everything under `swarm_basics/swarm_basics/`, most of `swarm_basics/launch/`,
 `swarm_basics/config/`, `swarm_basics/worlds/`, `swarm_basics/scripts/` and all
 of `social_bt_plugins/` was written for this thesis. The repository is MIT
 licensed, see `LICENSE`.
-
-## Contact
-
-OggieCo — ognyan.laz@gmail.com
